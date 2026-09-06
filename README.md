@@ -35,7 +35,11 @@ config, so configuring in Lua and configuring from the bar both keep working.
 - A C++23 compiler and `make`
 
 Hyprland's plugin ABI is not stable: **the plugin must be rebuilt after every
-Hyprland update**, or it will refuse to load with a version-mismatch notice.
+Hyprland update.** This is not a cosmetic requirement. A stale `.so` faults
+inside `pluginInit`, and because the Hyprland config loads plugins during
+compositor startup, that fault takes the session down *before* you can log in —
+leaving a TTY as the only way back. `install.sh` sets up a pacman hook so the
+rebuild happens for you; see [Staying in step with Hyprland](#staying-in-step-with-hyprland).
 
 ## Install
 
@@ -65,6 +69,39 @@ config also declares `hl.permission({ ..., type = "plugin", mode = "allow" })`
 so later launches don't prompt.
 
 Remove it with `./uninstall.sh`.
+
+## Staying in step with Hyprland
+
+`install.sh` installs a pacman hook, which needs `sudo` for two root-owned
+paths:
+
+| | |
+| --- | --- |
+| `/etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook` | the trigger |
+| `/usr/local/bin/omarchy-fx-rebuild` | the runner, generated with your paths baked in |
+
+After any package that moves the plugin ABI, the hook rebuilds this checkout and
+reinstalls the `.so`. It triggers on `hyprland` **and** on `aquamarine`,
+`hyprcursor`, `hyprgraphics`, `hyprlang` and `hyprutils`: the version compiled
+into a plugin is the Hyprland commit hash plus the versions of all five
+libraries, so any of them can invalidate a built `.so`.
+
+Two things the runner is careful about, both of which matter more than the
+effect itself:
+
+- **It never fails the pacman transaction.** A broken build warns; it does not
+  leave your system mid-upgrade.
+- **If the rebuild fails, it disarms the plugin** by renaming the `.so` to
+  `.so.stale`. A plugin that cannot load is a minor annoyance; a plugin that
+  faults during compositor startup costs you the login.
+
+Skip the hook with `./install.sh --no-hook` — then rebuilding after each
+Hyprland update is back to being your job. `uninstall.sh` removes both files.
+
+Relatedly, the installer never writes the `.so` in place. It installs to a
+temporary name and `rename(2)`s it over the old one, because a running Hyprland
+has the previous build mapped, and truncating that file underneath the
+compositor is itself a way to crash it.
 
 ## Configuration
 

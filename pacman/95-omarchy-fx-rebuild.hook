@@ -1,0 +1,24 @@
+# Rebuild omarchy-fx whenever something moves Hyprland's plugin ABI.
+#
+# The version compiled into a plugin is the Hyprland commit hash *plus* the
+# versions of every shared Hypr* library it was built against (see the defines
+# in /usr/include/hyprland/src/version.h), so an update to any of these
+# invalidates an already-built .so — not just an update to hyprland itself.
+#
+# Installed by omarchy-fx's install.sh, which also writes the runner below.
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = hyprland
+Target = aquamarine
+Target = hyprcursor
+Target = hyprgraphics
+Target = hyprlang
+Target = hyprutils
+
+[Action]
+Description = Rebuilding omarchy-fx against the new Hyprland ABI...
+When = PostTransaction
+Exec = /usr/local/bin/omarchy-fx-rebuild

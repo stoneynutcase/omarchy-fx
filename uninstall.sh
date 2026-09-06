@@ -11,6 +11,9 @@ SHELL_ID="omarchy-fx.wobbly"
 OMARCHY_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy"
 SHELL_DIR="$OMARCHY_DIR/plugins/$SHELL_ID"
 
+HOOK="/etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook"
+RUNNER="/usr/local/bin/omarchy-fx-rebuild"
+
 hyprctl plugin unload "$PLUGIN_DIR/omarchy-fx.so" >/dev/null 2>&1 || true
 
 # Disable before deleting, so the widget also leaves the bar layout in
@@ -19,7 +22,15 @@ if [[ -d "$SHELL_DIR" ]] && command -v omarchy-shell >/dev/null 2>&1; then
   omarchy plugin disable "$SHELL_ID" >/dev/null 2>&1 || true
 fi
 
-rm -f "$PLUGIN_DIR/omarchy-fx.so" "$HYPR_DIR/omarchy_fx.lua"
+rm -f "$PLUGIN_DIR/omarchy-fx.so" "$PLUGIN_DIR/omarchy-fx.so.stale" "$HYPR_DIR/omarchy_fx.lua"
+
+# Left behind, the hook would rebuild a plugin nothing loads any more — and
+# would fail the rebuild loudly on every Hyprland update once the checkout goes.
+if [[ -e "$HOOK" || -e "$RUNNER" ]]; then
+  echo ":: removing the pacman rebuild hook (needs sudo)"
+  sudo rm -f "$HOOK" "$RUNNER" ||
+    echo "warning: could not remove $HOOK / $RUNNER; delete them by hand." >&2
+fi
 
 # Settings written by the panel; ours alone, so it goes with the plugin.
 rm -f "$OMARCHY_DIR/omarchy-fx.conf"
