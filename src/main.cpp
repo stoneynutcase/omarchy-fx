@@ -1,5 +1,5 @@
 #include "globals.hpp"
-#include "WobblyManager.hpp"
+#include "EffectManager.hpp"
 
 #include <hyprland/src/debug/log/Logger.hpp>
 #include <hyprland/src/version.h>
@@ -25,18 +25,18 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[omarchy-fx] version mismatch");
     }
 
-    OmarchyFX::g_wobbly = makeUnique<OmarchyFX::CWobblyManager>();
-    OmarchyFX::g_wobbly->registerConfig();
-    OmarchyFX::g_wobbly->init();
+    OmarchyFX::g_fx = makeUnique<OmarchyFX::CEffectManager>();
+    OmarchyFX::g_fx->registerConfig();
+    OmarchyFX::g_fx->init();
 
-    Log::logger->log(Log::INFO, "[omarchy-fx] loaded, wobbly windows armed");
+    Log::logger->log(Log::INFO, "[omarchy-fx] loaded, window effects armed");
 
-    return {"omarchy-fx", "Window effects for Omarchy: KDE-style wobbly windows while dragging", "omarchy-fx", "0.1.0"};
+    return {"omarchy-fx", "Window effects for Omarchy: wobbly dragging and elastic tiling moves", "omarchy-fx", "0.2.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
-    if (OmarchyFX::g_wobbly) {
-        OmarchyFX::g_wobbly->shutdown();
-        OmarchyFX::g_wobbly.reset();
+    if (OmarchyFX::g_fx) {
+        OmarchyFX::g_fx->shutdown();
+        OmarchyFX::g_fx.reset();
     }
 }

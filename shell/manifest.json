@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "omarchy-fx.wobbly",
-  "name": "Wobbly Windows",
-  "version": "0.1.0",
+  "id": "omarchy-fx",
+  "name": "Window Effects",
+  "version": "0.2.0",
   "author": "omarchy-fx",
   "license": "GPL-2.0-or-later",
-  "description": "Bar toggle and settings panel for the omarchy-fx wobbly windows Hyprland plugin.",
+  "description": "Bar toggle and settings panel for the omarchy-fx window effects Hyprland plugin.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,8 +13,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Wobbly Windows",
-    "description": "Click: settings panel. Middle click: toggle the effect.",
+    "displayName": "Window Effects",
+    "description": "Click: settings panel. Middle click: toggle every effect.",
     "category": "Appearance",
     "allowMultiple": false,
     "defaultSection": "right"

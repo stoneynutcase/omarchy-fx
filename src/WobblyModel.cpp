@@ -44,14 +44,7 @@ void CWobblyModel::computeOrigins(const CBox& rect) {
     m_xLength = rect.w / (GRID - 1.0);
     m_yLength = rect.h / (GRID - 1.0);
 
-    for (int j = 0; j < GRID; ++j) {
-        for (int i = 0; i < GRID; ++i) {
-            // The last column/row lands exactly on the far edge rather than
-            // accumulating the increment, so the lattice matches the rect.
-            m_origin[index(i, j)] = Vector2D{i == GRID - 1 ? rect.x + rect.w : rect.x + i * m_xLength, //
-                                             j == GRID - 1 ? rect.y + rect.h : rect.y + j * m_yLength};
-        }
-    }
+    latticeOrigins(rect, m_origin);
 }
 
 void CWobblyModel::reset(const CBox& rect) {
@@ -153,7 +146,7 @@ void CWobblyModel::computeAccelerations(const SWobblyParams& params) {
     }
 }
 
-void CWobblyModel::smooth(std::array<Vector2D, COUNT>& data) {
+void CWobblyModel::smooth(SLattice& data) {
     // 3x3 mean where the centre carries as much weight as all its neighbours
     // together: (sum of n neighbours + n * self) / 2n.
     for (int j = 0; j < GRID; ++j) {
@@ -218,7 +211,7 @@ void CWobblyModel::step(float dtMs, const SWobblyParams& params, const CBox& rec
 
     double accSum = 0;
 
-    for (int k = 0; k < COUNT; ++k) {
+    for (int k = 0; k < Lattice::COUNT; ++k) {
         auto acc = m_acceleration[k];
         fixVectorBounds(acc, params.minAcceleration, params.maxAcceleration);
 
@@ -230,7 +223,7 @@ void CWobblyModel::step(float dtMs, const SWobblyParams& params, const CBox& rec
 
     double velSum = 0;
 
-    for (int k = 0; k < COUNT; ++k) {
+    for (int k = 0; k < Lattice::COUNT; ++k) {
         fixVectorBounds(m_velocity[k], params.minVelocity, params.maxVelocity);
         m_position[k] += m_velocity[k] * sc<double>(dtMs * params.moveFactor);
         velSum += std::abs(m_velocity[k].x) + std::abs(m_velocity[k].y);
@@ -241,19 +234,16 @@ void CWobblyModel::step(float dtMs, const SWobblyParams& params, const CBox& rec
     m_wobbling = !(accSum < params.stopAcceleration && velSum < params.stopVelocity);
 }
 
-Vector2D CWobblyModel::controlOffset(int i, int j) const {
-    return m_position[index(i, j)] - m_origin[index(i, j)];
+SLattice CWobblyModel::offsets() const {
+    SLattice out;
+
+    for (int k = 0; k < Lattice::COUNT; ++k) {
+        out[k] = m_position[k] - m_origin[k];
+    }
+
+    return out;
 }
 
 CBox CWobblyModel::controlBounds() const {
-    Vector2D min = m_position[0], max = m_position[0];
-
-    for (const auto& p : m_position) {
-        min.x = std::min(min.x, p.x);
-        min.y = std::min(min.y, p.y);
-        max.x = std::max(max.x, p.x);
-        max.y = std::max(max.y, p.y);
-    }
-
-    return CBox{min.x, min.y, max.x - min.x, max.y - min.y};
+    return latticeBounds(m_position);
 }

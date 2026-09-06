@@ -1,4 +1,4 @@
-#include "WobblyTransformer.hpp"
+#include "MeshTransformer.hpp"
 #include "globals.hpp"
 
 #include <hyprland/src/render/Renderer.hpp>
@@ -35,7 +35,7 @@ void main() {
 }
 )#";
 
-// One program for every wobbling window; created lazily on the render thread.
+// One program for every deformed window; created lazily on the render thread.
 static GLuint g_program  = 0;
 static GLint  g_uProj    = -1;
 static GLint  g_uTex     = -1;
@@ -62,7 +62,7 @@ static GLuint compileShader(GLenum type, const char* src) {
     return shader;
 }
 
-bool CWobblyTransformer::ensureProgram() {
+bool CMeshTransformer::ensureProgram() {
     if (g_program)
         return true;
 
@@ -107,7 +107,7 @@ bool CWobblyTransformer::ensureProgram() {
     return true;
 }
 
-void CWobblyTransformer::dropProgram() {
+void CMeshTransformer::dropProgram() {
     if (g_vbo) {
         glDeleteBuffers(1, &g_vbo);
         g_vbo = 0;
@@ -119,22 +119,22 @@ void CWobblyTransformer::dropProgram() {
     }
 }
 
-CWobblyTransformer::CWobblyTransformer(SP<SWobblyState> state) : m_state(state) {
+CMeshTransformer::CMeshTransformer(SP<SMeshState> state) : m_state(state) {
     ;
 }
 
-CWobblyTransformer::~CWobblyTransformer() {
+CMeshTransformer::~CMeshTransformer() {
     if (m_state)
         m_state->alive = false;
 }
 
-void CWobblyTransformer::preWindowRender(CSurfacePassElement::SRenderData* pRenderData) {
+void CMeshTransformer::preWindowRender(CSurfacePassElement::SRenderData* pRenderData) {
     // Snapshot and standalone passes never call amendTransformedRenderData, so
     // this is how we learn that the box we are about to get handed is stale.
     m_boxValid = false;
 }
 
-void CWobblyTransformer::amendTransformedRenderData(const CBox& currentBox, SMotionBlurData* pMotionBlurData) {
+void CMeshTransformer::amendTransformedRenderData(const CBox& currentBox, SMotionBlurData* pMotionBlurData) {
     m_currentBox = currentBox;
     m_boxValid   = true;
 }
@@ -149,7 +149,7 @@ static void bernstein(double t, double out[4]) {
     out[3]         = t * t * t;
 }
 
-SP<Render::IFramebuffer> CWobblyTransformer::transform(SP<Render::IFramebuffer> in) {
+SP<Render::IFramebuffer> CMeshTransformer::transform(SP<Render::IFramebuffer> in) {
     if (!m_state || !m_boxValid)
         return in;
 
@@ -171,14 +171,14 @@ SP<Render::IFramebuffer> CWobblyTransformer::transform(SP<Render::IFramebuffer> 
     if (!ensureProgram())
         return in;
 
-    const auto&  MODEL  = m_state->model;
-    const auto   FBSIZE = in->m_size;
+    const auto&  OFFSETS = m_state->offsets;
+    const auto   FBSIZE  = in->m_size;
     const double SCALE  = PMONITOR->m_scale;
 
     if (FBSIZE.x <= 0 || FBSIZE.y <= 0)
         return in;
 
-    const int TESS = std::clamp(m_state->params.tessellation, 2, 64);
+    const int TESS = std::clamp(m_state->tessellation, 2, 64);
     const int SIDE = TESS + 1;
 
     // Where the window frame sits inside the bounding box we are handed. The
@@ -216,9 +216,9 @@ SP<Render::IFramebuffer> CWobblyTransformer::transform(SP<Render::IFramebuffer> 
             // displacement to add to the undeformed mesh point. An undeformed
             // net therefore yields exactly zero.
             Vector2D offset;
-            for (int cj = 0; cj < CWobblyModel::GRID; ++cj) {
-                for (int ci = 0; ci < CWobblyModel::GRID; ++ci) {
-                    offset += MODEL.controlOffset(ci, cj) * (bx[i][ci] * by[j][cj]);
+            for (int cj = 0; cj < Lattice::GRID; ++cj) {
+                for (int ci = 0; ci < Lattice::GRID; ++ci) {
+                    offset += OFFSETS[Lattice::index(ci, cj)] * (bx[i][ci] * by[j][cj]);
                 }
             }
 

@@ -2,11 +2,11 @@ import QtQuick
 import qs.Ui
 
 // Bar entry point for omarchy-fx. The icon reflects whether the compositor
-// plugin is loaded and whether the effect is on; everything else lives in
+// plugin is loaded and whether any effect is on; everything else lives in
 // Panel.qml, which is loaded once so the widget can read its state.
 BarWidget {
   id: root
-  moduleName: "omarchy-fx.wobbly"
+  moduleName: "omarchy-fx"
 
   function injectPanel() {
     var target = panelLoader.item
@@ -69,14 +69,14 @@ BarWidget {
     bar: root.bar
     // nf-fa-magic
     text: ""
-    // Dim when the effect is off, or when the compositor plugin isn't loaded
-    // at all — in both cases dragging a window will not wobble.
+    // Dim when every effect is off, or when the compositor plugin isn't loaded
+    // at all — in both cases nothing on screen will deform.
     dimmed: panelLoader.item ? !(panelLoader.item.pluginLoaded && panelLoader.item.enabled) : true
     tooltipText: panelLoader.item
       ? (panelLoader.item.pluginLoaded
-          ? (panelLoader.item.enabled ? "Wobbly windows: on" : "Wobbly windows: off")
+          ? (panelLoader.item.enabled ? "Window effects: on" : "Window effects: off")
           : "omarchy-fx plugin not loaded")
-      : "Wobbly windows"
+      : "Window effects"
 
     onPressed: function(b) {
       if (b === Qt.MiddleButton) root.toggleEffect()

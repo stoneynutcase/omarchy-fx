@@ -7,9 +7,10 @@ HYPR_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
 ENTRY="$HYPR_DIR/hyprland.lua"
 SNIPPET='require("hypr.omarchy_fx")'
 
-SHELL_ID="omarchy-fx.wobbly"
+# Both the current widget id and the one it replaced, so an uninstall after an
+# upgrade does not leave the old one behind.
+SHELL_IDS=("omarchy-fx" "omarchy-fx.wobbly")
 OMARCHY_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy"
-SHELL_DIR="$OMARCHY_DIR/plugins/$SHELL_ID"
 
 HOOK="/etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook"
 RUNNER="/usr/local/bin/omarchy-fx-rebuild"
@@ -18,9 +19,11 @@ hyprctl plugin unload "$PLUGIN_DIR/omarchy-fx.so" >/dev/null 2>&1 || true
 
 # Disable before deleting, so the widget also leaves the bar layout in
 # shell.json rather than lingering there as a dead id.
-if [[ -d "$SHELL_DIR" ]] && command -v omarchy-shell >/dev/null 2>&1; then
-  omarchy plugin disable "$SHELL_ID" >/dev/null 2>&1 || true
-fi
+for id in "${SHELL_IDS[@]}"; do
+  if [[ -d "$OMARCHY_DIR/plugins/$id" ]] && command -v omarchy-shell >/dev/null 2>&1; then
+    omarchy plugin disable "$id" >/dev/null 2>&1 || true
+  fi
+done
 
 rm -f "$PLUGIN_DIR/omarchy-fx.so" "$PLUGIN_DIR/omarchy-fx.so.stale" "$HYPR_DIR/omarchy_fx.lua"
 
@@ -35,15 +38,17 @@ fi
 # Settings written by the panel; ours alone, so it goes with the plugin.
 rm -f "$OMARCHY_DIR/omarchy-fx.conf"
 
-if [[ -d "$SHELL_DIR" ]]; then
-  rm -rf "$SHELL_DIR"
-  echo ":: removed the shell plugin from $SHELL_DIR"
-  command -v omarchy-shell >/dev/null 2>&1 && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
-fi
+for id in "${SHELL_IDS[@]}"; do
+  if [[ -d "$OMARCHY_DIR/plugins/$id" ]]; then
+    rm -rf "${OMARCHY_DIR:?}/plugins/$id"
+    echo ":: removed the shell plugin from $OMARCHY_DIR/plugins/$id"
+  fi
+done
+command -v omarchy-shell >/dev/null 2>&1 && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
 if [[ -f "$ENTRY" ]] && grep -qF "$SNIPPET" "$ENTRY"; then
   cp "$ENTRY" "$ENTRY.bak.$(date +%s)"
-  sed -i "/^-- omarchy-fx: wobbly windows$/d;\\|^$(printf '%s' "$SNIPPET" | sed 's/[][\\.*^$/]/\\&/g')\$|d" "$ENTRY"
+  sed -i "/^-- omarchy-fx: \(wobbly windows\|window effects\)$/d;\\|^$(printf '%s' "$SNIPPET" | sed 's/[][\\.*^$/]/\\&/g')\$|d" "$ENTRY"
   echo ":: removed '$SNIPPET' from $ENTRY (backup kept alongside it)"
 fi
 

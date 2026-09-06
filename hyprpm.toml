@@ -3,7 +3,7 @@ name = "omarchy-fx"
 authors = ["omarchy-fx"]
 
 [omarchy-fx]
-description = "KDE-style wobbly windows while dragging or resizing"
+description = "Window effects: wobbly dragging, and elastic stretch on tiled moves"
 authors = ["omarchy-fx"]
 output = "omarchy-fx.so"
 build = ["make all"]

@@ -6,9 +6,7 @@
 
 #pragma once
 
-#include <hyprland/src/helpers/math/Math.hpp>
-
-#include <array>
+#include "Mesh.hpp"
 
 namespace OmarchyFX {
 
@@ -53,9 +51,6 @@ namespace OmarchyFX {
     // spreads across the whole window.
     class CWobblyModel {
       public:
-        static constexpr int GRID  = 4;
-        static constexpr int COUNT = GRID * GRID;
-
         // Snaps the lattice flat onto rect and forgets all motion.
         void reset(const CBox& rect);
 
@@ -84,36 +79,37 @@ namespace OmarchyFX {
         // One integration pass. dtMs is clamped to KWin's 10 ms step by the caller.
         void     step(float dtMs, const SWobblyParams& params, const CBox& rect);
 
-        // position - origin for control point (i, j).
-        Vector2D controlOffset(int i, int j) const;
+        // Displacement of every control point from its rest position.
+        SLattice offsets() const;
 
-        // Conservative bounds of the deformed surface: a Bezier surface stays
-        // inside the convex hull of its control net.
+        // Conservative bounds of the deformed surface.
         CBox     controlBounds() const;
 
       private:
         void     computeOrigins(const CBox& rect);
         void     computeAccelerations(const SWobblyParams& params);
-        void     smooth(std::array<Vector2D, COUNT>& data);
+        void     smooth(SLattice& data);
         void     applyEdgeLocks();
 
-        static int index(int i, int j) {
-            return j * GRID + i;
+        static constexpr int GRID = Lattice::GRID;
+
+        static int           index(int i, int j) {
+            return Lattice::index(i, j);
         }
 
-        std::array<Vector2D, COUNT> m_origin{};
-        std::array<Vector2D, COUNT> m_position{};
-        std::array<Vector2D, COUNT> m_velocity{};
-        std::array<Vector2D, COUNT> m_acceleration{};
-        std::array<Vector2D, COUNT> m_buffer{};
-        std::array<bool, COUNT>     m_constraint{};
+        SLattice                              m_origin{};
+        SLattice                              m_position{};
+        SLattice                              m_velocity{};
+        SLattice                              m_acceleration{};
+        SLattice                              m_buffer{};
+        std::array<bool, Lattice::COUNT>      m_constraint{};
 
-        double                      m_xLength = 0, m_yLength = 0;
+        double                                m_xLength = 0, m_yLength = 0;
 
-        bool                        m_grabbed  = false;
-        bool                        m_wobbling = false;
+        bool                                  m_grabbed  = false;
+        bool                                  m_wobbling = false;
 
-        bool                        m_wobbleTop = true, m_wobbleLeft = true, m_wobbleRight = true, m_wobbleBottom = true;
-        CBox                        m_resizeOriginalRect;
+        bool                                  m_wobbleTop = true, m_wobbleLeft = true, m_wobbleRight = true, m_wobbleBottom = true;
+        CBox                                  m_resizeOriginalRect;
     };
 }

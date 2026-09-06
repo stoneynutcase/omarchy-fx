@@ -11,8 +11,14 @@ SNIPPET='require("hypr.omarchy_fx")'
 
 # The bar widget and settings panel, as an Omarchy shell plugin. The id has to
 # match the "id" in shell/manifest.json — that is what names the directory.
-SHELL_ID="omarchy-fx.wobbly"
+SHELL_ID="omarchy-fx"
 SHELL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$SHELL_ID"
+
+# The widget was one-effect-per-widget before, and named for the only effect
+# there was. Left in place it would sit in the bar next to its replacement,
+# writing the same settings file from a stale panel.
+OLD_SHELL_ID="omarchy-fx.wobbly"
+OLD_SHELL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$OLD_SHELL_ID"
 
 # Rebuild-on-update, so a Hyprland upgrade cannot leave a stale .so behind.
 HOOK="/etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook"
@@ -78,13 +84,21 @@ install -m 0644 "$REPO/hypr/omarchy_fx.lua" "$HYPR_DIR/omarchy_fx.lua"
 
 if [[ -f "$ENTRY" ]] && ! grep -qF "$SNIPPET" "$ENTRY"; then
   cp "$ENTRY" "$ENTRY.bak.$(date +%s)"
-  printf '\n-- omarchy-fx: wobbly windows\n%s\n' "$SNIPPET" >>"$ENTRY"
+  printf '\n-- omarchy-fx: window effects\n%s\n' "$SNIPPET" >>"$ENTRY"
   echo ":: added '$SNIPPET' to $ENTRY (backup kept alongside it)"
 fi
 
 # The bar widget is optional: the compositor plugin works on its own, and this
 # half only makes sense on an Omarchy shell.
 if command -v omarchy-shell >/dev/null 2>&1; then
+  # Disable before deleting, so the old id also leaves the bar layout in
+  # shell.json rather than lingering there as a dead entry.
+  if [[ -d "$OLD_SHELL_DIR" ]]; then
+    echo ":: replacing the old '$OLD_SHELL_ID' widget"
+    omarchy plugin disable "$OLD_SHELL_ID" >/dev/null 2>&1 || true
+    rm -rf "$OLD_SHELL_DIR"
+  fi
+
   echo ":: installing shell plugin to $SHELL_DIR"
   mkdir -p "$SHELL_DIR"
   install -m 0644 "$REPO"/shell/manifest.json "$REPO"/shell/*.qml "$SHELL_DIR/"

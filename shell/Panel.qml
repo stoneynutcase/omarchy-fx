@@ -5,7 +5,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Settings panel for the omarchy-fx Hyprland plugin.
+// Settings panel for the omarchy-fx Hyprland plugin — one section per effect.
 //
 // Both halves agree on one small key=value file. This panel owns it: it reads
 // the file directly and writes it back, then issues a stock `hyprctl reload`,
@@ -17,7 +17,7 @@ import qs.Ui
 // whole session down. Everything below uses stock hyprctl only.
 Panel {
   id: root
-  moduleName: "omarchy-fx.wobbly"
+  moduleName: "omarchy-fx"
   ipcTarget: "omarchy-fx"
   manageIpc: false
 
@@ -40,11 +40,24 @@ Panel {
   property bool hyprOptionsMissing: false
   readonly property bool configError: root.pluginLoaded && root.hyprOptionsMissing
 
-  property bool enabled: true
+  property bool wobblyEnabled: true
   property bool onMove: true
   property bool onResize: true
   property int  wobbliness: 1
+
+  property bool elasticEnabled: true
+  property bool onTiled: true
+  property bool onFloating: false
+  property int  stretchiness: 2
+
+  // One mesh resolution for both effects. The plugin keeps a key per effect;
+  // this writes them together, because "how finely is the window tessellated"
+  // is a rendering cost, not a per-effect taste.
   property int  tessellation: 20
+
+  // Anything on at all? That is what the bar icon and the middle-click toggle
+  // act on.
+  readonly property bool enabled: root.wobblyEnabled || root.elasticEnabled
 
   // Read-only echo of what the physics is actually running with, so a value
   // set in Lua is visible here rather than silently contradicting the sliders.
@@ -52,13 +65,23 @@ Panel {
   property real drag: 0.85
   property real moveFactor: 0.10
 
-  readonly property var wobblinessNames: ["Rigid", "Subtle", "Springy", "Loose", "Jelly"]
+  property real period: 180
+  property real damping: 0.55
+  property real maxStretch: 65
 
-  // KWin's pset[0..4]. Mirrors wobblyPreset() in src/WobblyModel.cpp, which
-  // stays the source of truth — keep the two tables in step.
+  readonly property var wobblinessNames:  ["Rigid", "Subtle", "Springy", "Loose", "Jelly"]
+  readonly property var stretchinessNames: ["Taut", "Springy", "Elastic", "Rubber", "Taffy"]
+
+  // KWin's pset[0..4]. Mirrors wobblyPreset() in src/WobblyModel.cpp.
   readonly property var presetStiffness: [0.15, 0.10, 0.06, 0.03, 0.01]
   readonly property var presetDrag:      [0.80, 0.85, 0.90, 0.92, 0.97]
   readonly property var presetMove:      [0.10, 0.10, 0.10, 0.20, 0.25]
+
+  // Mirrors elasticPreset() in src/ElasticModel.cpp. Both tables stay the
+  // source of truth — keep these in step with them.
+  readonly property var presetPeriod:     [110, 145, 180, 235, 310]
+  readonly property var presetDamping:    [0.80, 0.65, 0.55, 0.45, 0.35]
+  readonly property var presetMaxStretch: [30, 45, 65, 90, 130]
 
   readonly property string settingsPath: Quickshell.env("HOME") + "/.config/omarchy/omarchy-fx.conf"
 
@@ -66,8 +89,20 @@ Panel {
   // query below and the did-it-register check both read off this one list.
   readonly property var hyprKeys: [
     "wobbly_enabled", "wobbly_on_move", "wobbly_on_resize", "wobbly_wobbliness",
-    "wobbly_tessellation", "wobbly_stiffness", "wobbly_drag", "wobbly_move_factor"
+    "wobbly_tessellation", "wobbly_stiffness", "wobbly_drag", "wobbly_move_factor",
+    "elastic_enabled", "elastic_on_tiled", "elastic_on_floating", "elastic_stretchiness",
+    "elastic_tessellation", "elastic_period", "elastic_damping", "elastic_tilt",
+    "elastic_follow", "elastic_max_stretch"
   ]
+
+  // Settings-file keys as the panel wrote them before there was more than one
+  // effect. Read for seeding, never written back.
+  readonly property var legacyKeys: ({
+    "enabled": "wobbly_enabled",
+    "on_move": "wobbly_on_move",
+    "on_resize": "wobbly_on_resize",
+    "tessellation": "wobbly_tessellation"
+  })
 
   // ---- reading state -------------------------------------------------------
 
@@ -92,15 +127,23 @@ Panel {
     return fallback
   }
 
+  function clamp5(v) { return Math.max(0, Math.min(4, Number(v))) }
+
   function apply() {
-    root.enabled      = effective("enabled",      "wobbly_enabled",      1) != 0
-    root.onMove       = effective("on_move",      "wobbly_on_move",      1) != 0
-    root.onResize     = effective("on_resize",    "wobbly_on_resize",    1) != 0
-    root.wobbliness   = Math.max(0, Math.min(4, Number(effective("wobbliness",   "wobbly_wobbliness",   1))))
-    root.tessellation = Number(effective("tessellation", "wobbly_tessellation", 20))
+    root.wobblyEnabled = effective("wobbly_enabled",   "wobbly_enabled",   1) != 0
+    root.onMove        = effective("wobbly_on_move",   "wobbly_on_move",   1) != 0
+    root.onResize      = effective("wobbly_on_resize", "wobbly_on_resize", 1) != 0
+    root.wobbliness    = root.clamp5(effective("wobbliness", "wobbly_wobbliness", 1))
+
+    root.elasticEnabled = effective("elastic_enabled",     "elastic_enabled",     1) != 0
+    root.onTiled        = effective("elastic_on_tiled",    "elastic_on_tiled",    1) != 0
+    root.onFloating     = effective("elastic_on_floating", "elastic_on_floating", 0) != 0
+    root.stretchiness   = root.clamp5(effective("stretchiness", "elastic_stretchiness", 2))
+
+    root.tessellation = Number(effective("wobbly_tessellation", "wobbly_tessellation", 20))
 
     // The physics the plugin will actually run with: the preset for the current
-    // wobbliness, with any non-negative per-parameter override applied on top.
+    // slider position, with any non-negative per-parameter override on top.
     var st = Number(effective("stiffness",   "wobbly_stiffness",   -1))
     var dr = Number(effective("drag",        "wobbly_drag",        -1))
     var mv = Number(effective("move_factor", "wobbly_move_factor", -1))
@@ -108,9 +151,17 @@ Panel {
     root.stiffness  = st >= 0 ? st : root.presetStiffness[root.wobbliness]
     root.drag       = dr >= 0 ? dr : root.presetDrag[root.wobbliness]
     root.moveFactor = mv >= 0 ? mv : root.presetMove[root.wobbliness]
+
+    var pe = Number(effective("elastic_period",      "elastic_period",      -1))
+    var da = Number(effective("elastic_damping",     "elastic_damping",     -1))
+    var ms = Number(effective("elastic_max_stretch", "elastic_max_stretch", -1))
+
+    root.period     = pe >= 0 ? pe : root.presetPeriod[root.stretchiness]
+    root.damping    = da >= 0 ? da : root.presetDamping[root.stretchiness]
+    root.maxStretch = ms >= 0 ? ms : root.presetMaxStretch[root.stretchiness]
   }
 
-  // key=value, '#' starts a comment. Mirrors CWobblyManager::loadSettings().
+  // key=value, '#' starts a comment. Mirrors CEffectManager::loadSettings().
   function parseSettings(text) {
     var vals = {}
     var lines = String(text).split("\n")
@@ -126,11 +177,20 @@ Panel {
       var raw = line.substring(eq + 1).trim()
       if (key === "" || raw === "") continue
 
-      if (key === "enabled" || key === "on_move" || key === "on_resize")
-        vals[key] = (raw === "true" || raw === "1" || raw === "yes") ? 1 : 0
+      if (raw === "true" || raw === "false" || raw === "yes" || raw === "no")
+        vals[key] = (raw === "true" || raw === "yes") ? 1 : 0
       else if (!isNaN(Number(raw)))
         vals[key] = Number(raw)
     }
+
+    // Fold in what an older panel wrote, without letting it win over a key
+    // written in the current spelling.
+    for (var legacy in root.legacyKeys) {
+      var target = root.legacyKeys[legacy]
+      if (vals[target] === undefined && vals[legacy] !== undefined)
+        vals[target] = vals[legacy]
+    }
+
     root.fileVals = vals
     root.apply()
   }
@@ -165,7 +225,7 @@ Panel {
         else vals[key] = v
       }
       root.hyprVals = vals
-      // registerConfig() registers all eight or none.
+      // registerConfig() registers all of them or none.
       root.hyprOptionsMissing = missing
     } catch (e) {
       root.hyprVals = ({})
@@ -182,11 +242,16 @@ Panel {
     var lines = [
       "# omarchy-fx settings — written by the Omarchy shell plugin.",
       "# Values not listed here fall back to the Hyprland config.",
-      "enabled=" + (root.enabled ? "true" : "false"),
-      "on_move=" + (root.onMove ? "true" : "false"),
-      "on_resize=" + (root.onResize ? "true" : "false"),
+      "wobbly_enabled=" + (root.wobblyEnabled ? "true" : "false"),
+      "wobbly_on_move=" + (root.onMove ? "true" : "false"),
+      "wobbly_on_resize=" + (root.onResize ? "true" : "false"),
       "wobbliness=" + root.wobbliness,
-      "tessellation=" + root.tessellation,
+      "elastic_enabled=" + (root.elasticEnabled ? "true" : "false"),
+      "elastic_on_tiled=" + (root.onTiled ? "true" : "false"),
+      "elastic_on_floating=" + (root.onFloating ? "true" : "false"),
+      "stretchiness=" + root.stretchiness,
+      "wobbly_tessellation=" + root.tessellation,
+      "elastic_tessellation=" + root.tessellation,
       ""
     ]
     settingsFile.setText(lines.join("\n"))
@@ -198,8 +263,11 @@ Panel {
   // Slider drags fire continuously; coalesce them into one write.
   function persistSoon() { writeDebounce.restart() }
 
+  // Middle-click on the bar widget: one switch for the lot.
   function toggleEnabled() {
-    root.enabled = !root.enabled
+    var next = !root.enabled
+    root.wobblyEnabled = next
+    root.elasticEnabled = next
     persist()
   }
 
@@ -273,6 +341,66 @@ Panel {
 
   // ---- UI ------------------------------------------------------------------
 
+  component EffectSlider: Item {
+    id: sliderBlock
+    property var    hostBar: null
+    property string caption: ""
+    property string valueText: ""
+    property bool   live: false
+    property int    minimum: 0
+    property int    maximum: 4
+    property int    step: 1
+    property int    ticks: 5
+    property int    value: 0
+    signal picked(int v)
+    signal committed(int v)
+
+    width: parent ? parent.width : 0
+    height: captionRow.implicitHeight + slider.implicitHeight + Style.space(4)
+    opacity: sliderBlock.live ? 1 : 0.5
+
+    Row {
+      id: captionRow
+      width: parent.width
+
+      Text {
+        width: parent.width - valueLabel.implicitWidth
+        text: sliderBlock.caption
+        textFormat: Text.PlainText
+        color: Qt.darker(Color.popups.text, 1.4)
+        font.family: sliderBlock.hostBar ? sliderBlock.hostBar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption
+      }
+
+      Text {
+        id: valueLabel
+        text: sliderBlock.valueText
+        textFormat: Text.PlainText
+        color: Color.popups.text
+        font.family: sliderBlock.hostBar ? sliderBlock.hostBar.fontFamily : Style.font.family
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
+    }
+
+    PanelSlider {
+      id: slider
+      anchors.top: captionRow.bottom
+      anchors.topMargin: Style.space(4)
+      width: parent.width
+      bar: sliderBlock.hostBar
+      enabled: sliderBlock.live
+      minimum: sliderBlock.minimum
+      maximum: sliderBlock.maximum
+      step: sliderBlock.step
+      integer: true
+      tickCount: sliderBlock.ticks
+      value: sliderBlock.value
+      onMoved: function(v) { sliderBlock.picked(Math.round(v)) }
+      onReleased: function(v) { sliderBlock.committed(Math.round(v)) }
+    }
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -296,7 +424,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Wobbly windows"
+          text: "Window effects"
           textFormat: Text.PlainText
           color: root.fg
           font.family: root.fontFam
@@ -314,30 +442,32 @@ Panel {
           font.pixelSize: Style.font.bodySmall
           text: root.configError
             ? "The plugin loaded but could not register its options."
-            : "The omarchy-fx Hyprland plugin is not loaded, so nothing will wobble. Load it with:\nhyprctl plugin load ~/.local/share/hyprland/plugins/omarchy-fx.so"
+            : "The omarchy-fx Hyprland plugin is not loaded, so nothing will deform. Load it with:\nhyprctl plugin load ~/.local/share/hyprland/plugins/omarchy-fx.so"
         }
 
         PanelSeparator { foreground: root.fg }
+
+        // ---- wobble ---------------------------------------------------------
 
         Toggle {
           width: parent.width
           enabled: root.pluginLoaded
           opacity: root.pluginLoaded ? 1 : 0.5
-          label: "Enabled"
-          description: "Wobble windows while they are dragged"
-          checked: root.enabled
+          label: "Wobbly windows"
+          description: "Wobble a window while the pointer drags it"
+          checked: root.wobblyEnabled
           foreground: root.fg
           fontFamily: root.fontFam
           onClicked: {
-            root.enabled = !root.enabled
+            root.wobblyEnabled = !root.wobblyEnabled
             root.persist()
           }
         }
 
         Toggle {
           width: parent.width
-          enabled: root.pluginLoaded && root.enabled
-          opacity: (root.pluginLoaded && root.enabled) ? 1 : 0.5
+          enabled: root.pluginLoaded && root.wobblyEnabled
+          opacity: (root.pluginLoaded && root.wobblyEnabled) ? 1 : 0.5
           label: "On move"
           description: "SUPER + left mouse drag"
           checked: root.onMove
@@ -351,8 +481,8 @@ Panel {
 
         Toggle {
           width: parent.width
-          enabled: root.pluginLoaded && root.enabled
-          opacity: (root.pluginLoaded && root.enabled) ? 1 : 0.5
+          enabled: root.pluginLoaded && root.wobblyEnabled
+          opacity: (root.pluginLoaded && root.wobblyEnabled) ? 1 : 0.5
           label: "On resize"
           description: "SUPER + right mouse drag"
           checked: root.onResize
@@ -364,128 +494,15 @@ Panel {
           }
         }
 
-        PanelSeparator { foreground: root.fg }
-
-        PanelSectionHeader {
-          width: parent.width
-          text: "Wobbliness"
-          foreground: root.fg
-          fontFamily: root.fontFam
+        EffectSlider {
+          hostBar: root.bar
+          caption: "Wobbliness"
+          valueText: root.wobblinessNames[root.clamp5(root.wobbliness)]
+          live: root.pluginLoaded && root.wobblyEnabled
+          value: root.wobbliness
+          onPicked: function(v) { root.wobbliness = v; root.persistSoon() }
+          onCommitted: function(v) { root.wobbliness = v; root.persist() }
         }
-
-        Item {
-          width: parent.width
-          height: wobblinessRow.implicitHeight + wobblinessSlider.implicitHeight + Style.space(4)
-          opacity: (root.pluginLoaded && root.enabled) ? 1 : 0.5
-
-          Row {
-            id: wobblinessRow
-            width: parent.width
-
-            Text {
-              width: parent.width - wobblinessValue.implicitWidth
-              text: "Less wobble to more"
-              textFormat: Text.PlainText
-              color: Qt.darker(root.fg, 1.4)
-              font.family: root.fontFam
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              id: wobblinessValue
-              text: root.wobblinessNames[Math.max(0, Math.min(4, root.wobbliness))]
-              textFormat: Text.PlainText
-              color: root.fg
-              font.family: root.fontFam
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
-          }
-
-          PanelSlider {
-            id: wobblinessSlider
-            anchors.top: wobblinessRow.bottom
-            anchors.topMargin: Style.space(4)
-            width: parent.width
-            bar: root.bar
-            enabled: root.pluginLoaded && root.enabled
-            minimum: 0
-            maximum: 4
-            step: 1
-            integer: true
-            tickCount: 5
-            value: root.wobbliness
-            onMoved: function(v) {
-              root.wobbliness = Math.round(v)
-              root.persistSoon()
-            }
-            onReleased: function(v) {
-              root.wobbliness = Math.round(v)
-              root.persist()
-            }
-          }
-        }
-
-        PanelSectionHeader {
-          width: parent.width
-          text: "Mesh resolution"
-          foreground: root.fg
-          fontFamily: root.fontFam
-        }
-
-        Item {
-          width: parent.width
-          height: tessRow.implicitHeight + tessSlider.implicitHeight + Style.space(4)
-          opacity: (root.pluginLoaded && root.enabled) ? 1 : 0.5
-
-          Row {
-            id: tessRow
-            width: parent.width
-
-            Text {
-              width: parent.width - tessValue.implicitWidth
-              text: "Quads per axis"
-              textFormat: Text.PlainText
-              color: Qt.darker(root.fg, 1.4)
-              font.family: root.fontFam
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              id: tessValue
-              text: String(root.tessellation)
-              textFormat: Text.PlainText
-              color: root.fg
-              font.family: root.fontFam
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
-          }
-
-          PanelSlider {
-            id: tessSlider
-            anchors.top: tessRow.bottom
-            anchors.topMargin: Style.space(4)
-            width: parent.width
-            bar: root.bar
-            enabled: root.pluginLoaded && root.enabled
-            minimum: 4
-            maximum: 40
-            step: 2
-            integer: true
-            value: root.tessellation
-            onMoved: function(v) {
-              root.tessellation = Math.round(v)
-              root.persistSoon()
-            }
-            onReleased: function(v) {
-              root.tessellation = Math.round(v)
-              root.persist()
-            }
-          }
-        }
-
-        PanelSeparator { foreground: root.fg }
 
         Text {
           width: parent.width
@@ -495,9 +512,106 @@ Panel {
           color: Qt.darker(root.fg, 1.5)
           font.family: root.fontFam
           font.pixelSize: Style.font.caption
-          text: "In effect: stiffness " + root.stiffness.toFixed(2)
+          text: "stiffness " + root.stiffness.toFixed(2)
             + " · drag " + root.drag.toFixed(2)
             + " · move factor " + root.moveFactor.toFixed(2)
+        }
+
+        PanelSeparator { foreground: root.fg }
+
+        // ---- elasticity -----------------------------------------------------
+
+        Toggle {
+          width: parent.width
+          enabled: root.pluginLoaded
+          opacity: root.pluginLoaded ? 1 : 0.5
+          label: "Elastic moves"
+          description: "Stretch a window when the layout moves it"
+          checked: root.elasticEnabled
+          foreground: root.fg
+          fontFamily: root.fontFam
+          onClicked: {
+            root.elasticEnabled = !root.elasticEnabled
+            root.persist()
+          }
+        }
+
+        Toggle {
+          width: parent.width
+          enabled: root.pluginLoaded && root.elasticEnabled
+          opacity: (root.pluginLoaded && root.elasticEnabled) ? 1 : 0.5
+          label: "Tiled windows"
+          description: "Swapping, and any reflow of the layout"
+          checked: root.onTiled
+          foreground: root.fg
+          fontFamily: root.fontFam
+          onClicked: {
+            root.onTiled = !root.onTiled
+            root.persist()
+          }
+        }
+
+        Toggle {
+          width: parent.width
+          enabled: root.pluginLoaded && root.elasticEnabled
+          opacity: (root.pluginLoaded && root.elasticEnabled) ? 1 : 0.5
+          label: "Floating windows"
+          description: "Animated moves and resizes of floating windows"
+          checked: root.onFloating
+          foreground: root.fg
+          fontFamily: root.fontFam
+          onClicked: {
+            root.onFloating = !root.onFloating
+            root.persist()
+          }
+        }
+
+        EffectSlider {
+          hostBar: root.bar
+          caption: "Stretchiness"
+          valueText: root.stretchinessNames[root.clamp5(root.stretchiness)]
+          live: root.pluginLoaded && root.elasticEnabled
+          value: root.stretchiness
+          onPicked: function(v) { root.stretchiness = v; root.persistSoon() }
+          onCommitted: function(v) { root.stretchiness = v; root.persist() }
+        }
+
+        Text {
+          width: parent.width
+          visible: root.pluginLoaded && !root.configError
+          wrapMode: Text.WordWrap
+          textFormat: Text.PlainText
+          color: Qt.darker(root.fg, 1.5)
+          font.family: root.fontFam
+          font.pixelSize: Style.font.caption
+          text: "period " + Math.round(root.period) + " ms"
+            + " · damping " + root.damping.toFixed(2)
+            + " · max stretch " + Math.round(root.maxStretch) + " px"
+        }
+
+        PanelSeparator { foreground: root.fg }
+
+        // ---- shared rendering -----------------------------------------------
+
+        PanelSectionHeader {
+          width: parent.width
+          text: "Mesh resolution"
+          foreground: root.fg
+          fontFamily: root.fontFam
+        }
+
+        EffectSlider {
+          hostBar: root.bar
+          caption: "Quads per axis, for every effect"
+          valueText: String(root.tessellation)
+          live: root.pluginLoaded && root.enabled
+          minimum: 4
+          maximum: 40
+          step: 2
+          ticks: 0
+          value: root.tessellation
+          onPicked: function(v) { root.tessellation = v; root.persistSoon() }
+          onCommitted: function(v) { root.tessellation = v; root.persist() }
         }
       }
     }
