@@ -8,6 +8,11 @@ HYPR_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
 ENTRY="$HYPR_DIR/hyprland.lua"
 SNIPPET='require("hypr.omarchy_fx")'
 
+# The bar widget and settings panel, as an Omarchy shell plugin. The id has to
+# match the "id" in shell/manifest.json — that is what names the directory.
+SHELL_ID="omarchy-fx.wobbly"
+SHELL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$SHELL_ID"
+
 if ! pkg-config --exists hyprland; then
   echo "error: Hyprland development headers not found. Install them with:" >&2
   echo "       omarchy pkg add hyprland" >&2
@@ -40,6 +45,30 @@ if [[ -f "$ENTRY" ]] && ! grep -qF "$SNIPPET" "$ENTRY"; then
   cp "$ENTRY" "$ENTRY.bak.$(date +%s)"
   printf '\n-- omarchy-fx: wobbly windows\n%s\n' "$SNIPPET" >>"$ENTRY"
   echo ":: added '$SNIPPET' to $ENTRY (backup kept alongside it)"
+fi
+
+# The bar widget is optional: the compositor plugin works on its own, and this
+# half only makes sense on an Omarchy shell.
+if command -v omarchy-shell >/dev/null 2>&1; then
+  echo ":: installing shell plugin to $SHELL_DIR"
+  mkdir -p "$SHELL_DIR"
+  install -m 0644 "$REPO"/shell/manifest.json "$REPO"/shell/*.qml "$SHELL_DIR/"
+
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+
+  # Enable on first install only. Re-running must not drag the widget back to
+  # the right section after the user has moved it with `omarchy bar move`.
+  if omarchy plugin list --json 2>/dev/null |
+    jq -e --arg id "$SHELL_ID" 'any(.[]; .id == $id and .enabled)' >/dev/null 2>&1; then
+    echo ":: shell plugin already enabled, leaving its bar placement alone"
+  elif omarchy plugin enable "$SHELL_ID" --section right >/dev/null 2>&1; then
+    echo ":: added the widget to the right of the bar (omarchy bar move $SHELL_ID to relocate)"
+  else
+    echo ":: could not enable the widget automatically. Enable it with:" >&2
+    echo "       omarchy plugin enable $SHELL_ID --section right" >&2
+  fi
+else
+  echo ":: omarchy-shell not found, skipping the bar widget"
 fi
 
 echo

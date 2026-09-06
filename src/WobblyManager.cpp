@@ -17,6 +17,8 @@
 #include <hyprland/src/render/Renderer.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
 
 using namespace OmarchyFX;
 
@@ -59,7 +61,79 @@ void CWobblyManager::registerConfig() {
         Log::logger->log(Log::ERR, "[omarchy-fx] failed to register config values, staying inert");
 }
 
+std::string CWobblyManager::settingsPath() {
+    const auto XDG = getenv("XDG_CONFIG_HOME");
+    if (XDG && *XDG)
+        return std::string{XDG} + "/omarchy/omarchy-fx.conf";
+
+    const auto HOME = getenv("HOME");
+    return std::string{HOME ? HOME : ""} + "/.config/omarchy/omarchy-fx.conf";
+}
+
+void CWobblyManager::loadSettings() {
+    m_overrides = {};
+
+    std::ifstream file(settingsPath());
+    if (!file.good())
+        return;
+
+    const auto asBool = [](const std::string& v) { return v == "true" || v == "1" || v == "yes"; };
+
+    std::string line;
+    while (std::getline(file, line)) {
+        const auto HASH = line.find('#');
+        if (HASH != std::string::npos)
+            line = line.substr(0, HASH);
+
+        const auto EQ = line.find('=');
+        if (EQ == std::string::npos)
+            continue;
+
+        auto key   = line.substr(0, EQ);
+        auto value = line.substr(EQ + 1);
+
+        const auto TRIM = [](std::string& s) {
+            const auto FIRST = s.find_first_not_of(" \t\r\n");
+            const auto LAST  = s.find_last_not_of(" \t\r\n");
+            s                = FIRST == std::string::npos ? "" : s.substr(FIRST, LAST - FIRST + 1);
+        };
+        TRIM(key);
+        TRIM(value);
+
+        if (key.empty() || value.empty())
+            continue;
+
+        try {
+            if (key == "enabled")
+                m_overrides.enabled = asBool(value);
+            else if (key == "on_move")
+                m_overrides.onMove = asBool(value);
+            else if (key == "on_resize")
+                m_overrides.onResize = asBool(value);
+            else if (key == "wobbliness")
+                m_overrides.wobbliness = std::stoi(value);
+            else if (key == "tessellation")
+                m_overrides.tessellation = std::stoi(value);
+            else if (key == "stiffness")
+                m_overrides.stiffness = std::stof(value);
+            else if (key == "drag")
+                m_overrides.drag = std::stof(value);
+            else if (key == "move_factor")
+                m_overrides.moveFactor = std::stof(value);
+        } catch (const std::exception& e) {
+            Log::logger->log(Log::WARN, "[omarchy-fx] bad value for '{}' in settings: {}", key, value);
+        }
+    }
+}
+
 void CWobblyManager::init() {
+    loadSettings();
+
+    // The settings file is written by the shell plugin's panel, which follows
+    // the write with `hyprctl reload`. Picking the file back up here is what
+    // makes the panel's changes take effect.
+    m_listeners.emplace_back(Event::bus()->m_events.config.reloaded.listen([this]() { loadSettings(); }));
+
     m_listeners.emplace_back(Event::bus()->m_events.render.preChecks.listen([this](const PHLMONITOR& monitor) {
         syncDrag();
         tick(monitor);
@@ -92,16 +166,20 @@ SWobblyParams CWobblyManager::readParams() const {
     static auto PMOVEFACTOR = CConfigValue<Config::FLOAT>(CFG_MOVE_FACTOR);
     static auto PTESS       = CConfigValue<Config::INTEGER>(CFG_TESSELATION);
 
-    auto params = wobblyPreset(sc<int>(*PWOBBLINESS));
+    auto params = wobblyPreset(m_overrides.wobbliness.value_or(sc<int>(*PWOBBLINESS)));
 
-    if (*PSTIFFNESS >= 0.F)
-        params.stiffness = *PSTIFFNESS;
-    if (*PDRAG >= 0.F)
-        params.drag = *PDRAG;
-    if (*PMOVEFACTOR >= 0.F)
-        params.moveFactor = *PMOVEFACTOR;
+    const float STIFFNESS = m_overrides.stiffness.value_or(*PSTIFFNESS);
+    const float DRAG      = m_overrides.drag.value_or(*PDRAG);
+    const float MOVE      = m_overrides.moveFactor.value_or(*PMOVEFACTOR);
 
-    params.tessellation = std::clamp(sc<int>(*PTESS), 2, 64);
+    if (STIFFNESS >= 0.F)
+        params.stiffness = STIFFNESS;
+    if (DRAG >= 0.F)
+        params.drag = DRAG;
+    if (MOVE >= 0.F)
+        params.moveFactor = MOVE;
+
+    params.tessellation = std::clamp(m_overrides.tessellation.value_or(sc<int>(*PTESS)), 2, 64);
 
     return params;
 }
@@ -178,15 +256,19 @@ void CWobblyManager::syncDrag() {
     static auto PONMOVE   = CConfigValue<Config::BOOL>(CFG_ON_MOVE);
     static auto PONRESIZE = CConfigValue<Config::BOOL>(CFG_ON_RESIZE);
 
-    PHLWINDOW   dragged;
-    bool        resizing = false;
+    const bool ENABLED   = m_overrides.enabled.value_or(*PENABLED);
+    const bool ON_MOVE   = m_overrides.onMove.value_or(*PONMOVE);
+    const bool ON_RESIZE = m_overrides.onResize.value_or(*PONRESIZE);
 
-    if (*PENABLED && g_layoutManager) {
+    PHLWINDOW  dragged;
+    bool       resizing = false;
+
+    if (ENABLED && g_layoutManager) {
         const auto& CONTROLLER = g_layoutManager->dragController();
         if (const auto TARGET = CONTROLLER->target()) {
             const auto MODE   = CONTROLLER->mode();
             const bool RESIZE = MODE != MBIND_MOVE && MODE != MBIND_INVALID;
-            if ((MODE == MBIND_MOVE && *PONMOVE) || (RESIZE && *PONRESIZE)) {
+            if ((MODE == MBIND_MOVE && ON_MOVE) || (RESIZE && ON_RESIZE)) {
                 dragged  = TARGET->window();
                 resizing = RESIZE;
             }

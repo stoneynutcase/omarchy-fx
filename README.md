@@ -8,14 +8,26 @@ the cursor, then springs back into shape when you let go — the KDE
 - `SUPER` + **right** mouse drag — resize, wobbling from the grabbed corner
 - `SUPER` + **left** mouse drag — move, wobbling from wherever you grabbed it
 
-## Why this is a Hyprland plugin, not an Omarchy shell plugin
+## Why the effect is a Hyprland plugin, not an Omarchy shell plugin
 
 Omarchy shell plugins (`~/.config/omarchy/plugins/`) are Quickshell/QML and draw
 into the bar and overlays. They can't touch how the compositor rasterises a
 window, and a wobble *is* a change to how the window is rasterised: the window
 texture has to be resampled through a deformed mesh every frame. That only
-exists inside Hyprland's render pass, so this ships as a Hyprland plugin
+exists inside Hyprland's render pass, so the effect ships as a Hyprland plugin
 (`.so`), loaded from the Omarchy Hyprland config.
+
+The *settings* are a different matter, and those do ship as a shell plugin — a
+bar widget with a panel behind it, in `shell/`. The two halves meet at one
+`key=value` file, `~/.config/omarchy/omarchy-fx.conf`: the panel writes it and
+runs a stock `hyprctl reload`, and the compositor plugin re-reads it whenever
+the config reloads. Keys absent from that file fall through to the Hyprland
+config, so configuring in Lua and configuring from the bar both keep working.
+
+> The panel deliberately registers **no** custom hyprctl command. An earlier
+> version did, and registering a dispatcher inside `pluginInit` crashed
+> Hyprland — which, at startup, means the session never comes up and the fix
+> has to be made from a TTY. Everything the panel does uses stock `hyprctl`.
 
 ## Requirements
 
@@ -35,6 +47,12 @@ That builds `omarchy-fx.so`, installs it to
 `~/.local/share/hyprland/plugins/`, drops `~/.config/hypr/omarchy_fx.lua`, and
 appends `require("hypr.omarchy_fx")` to `~/.config/hypr/hyprland.lua` (keeping a
 timestamped backup of anything it touches).
+
+On an Omarchy shell it also installs the bar widget to
+`~/.config/omarchy/plugins/omarchy-fx.wobbly/` and enables it on the right of
+the bar. Re-running the installer leaves the placement alone, so
+`omarchy bar move omarchy-fx.wobbly` sticks. Click the widget for the settings
+panel, middle-click it to toggle the effect.
 
 Then load it into the running session:
 
