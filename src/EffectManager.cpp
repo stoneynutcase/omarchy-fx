@@ -7,6 +7,7 @@
 #include <hyprland/src/config/values/types/IntValue.hpp>
 #include <hyprland/src/debug/log/Logger.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
@@ -35,6 +36,7 @@ static constexpr const char* CFG_WOBBLY_TESS      = "plugin:omarchy-fx:wobbly_te
 static constexpr const char* CFG_ELASTIC_ENABLED  = "plugin:omarchy-fx:elastic_enabled";
 static constexpr const char* CFG_ELASTIC_TILED    = "plugin:omarchy-fx:elastic_on_tiled";
 static constexpr const char* CFG_ELASTIC_FLOATING = "plugin:omarchy-fx:elastic_on_floating";
+static constexpr const char* CFG_ELASTIC_WORKSPACE = "plugin:omarchy-fx:elastic_on_workspace";
 static constexpr const char* CFG_STRETCHINESS     = "plugin:omarchy-fx:elastic_stretchiness";
 static constexpr const char* CFG_ELASTIC_PERIOD   = "plugin:omarchy-fx:elastic_period";
 static constexpr const char* CFG_ELASTIC_DAMPING  = "plugin:omarchy-fx:elastic_damping";
@@ -50,6 +52,11 @@ static constexpr const char* CFG_ELASTIC_TESS     = "plugin:omarchy-fx:elastic_t
 static constexpr float WOBBLY_STEP_MS  = 10.F;
 static constexpr float ELASTIC_STEP_MS = 5.F;
 static constexpr float MAX_FRAME_MS    = 100.F;
+
+// How long a "this window was sent to another workspace" mark stays good. Long
+// enough to cover the gap between the event and the workspace becoming
+// visible, short enough that a silent move never surfaces later.
+static constexpr auto PENDING_MOVE_TTL = std::chrono::milliseconds(600);
 
 void CEffectManager::registerConfig() {
     using namespace Config::Values;
@@ -80,6 +87,7 @@ void CEffectManager::registerConfig() {
     BOOL(CFG_ELASTIC_ENABLED, "enable the elastic effect on animated window moves", true);
     BOOL(CFG_ELASTIC_TILED, "stretch tiled windows when the layout moves them", true);
     BOOL(CFG_ELASTIC_FLOATING, "stretch floating windows when something animates them", false);
+    BOOL(CFG_ELASTIC_WORKSPACE, "stretch a window you move to another workspace and follow", true);
     INT(CFG_STRETCHINESS, "stretchiness preset, 0 (least) to 4 (most)", 2, 0, 4);
     FLOAT(CFG_ELASTIC_PERIOD, "override the preset's spring period in ms, -1 to keep it", -1.F, -1.F, 2000.F);
     FLOAT(CFG_ELASTIC_DAMPING, "override the preset's damping ratio, -1 to keep it", -1.F, -1.F, 4.F);
@@ -163,6 +171,8 @@ void CEffectManager::loadSettings() {
                 m_overrides.elasticOnTiled = asBool(value);
             else if (key == "elastic_on_floating")
                 m_overrides.elasticOnFloating = asBool(value);
+            else if (key == "elastic_on_workspace")
+                m_overrides.elasticOnWorkspace = asBool(value);
             else if (key == "stretchiness")
                 m_overrides.stretchiness = std::stoi(value);
             else if (key == "elastic_tessellation")
@@ -197,6 +207,10 @@ void CEffectManager::init() {
 
     // React to the button press/release that starts and ends a drag without
     // waiting for the next frame.
+    // The only trigger that cannot be seen by watching geometry: a carried
+    // window's own rect does not move, the workspace under it does.
+    m_listeners.emplace_back(Event::bus()->m_events.window.moveToWorkspace.listen([this](const PHLWINDOW& window, const PHLWORKSPACE& workspace) { noteWorkspaceMove(window); }));
+
     m_listeners.emplace_back(Event::bus()->m_events.input.mouse.button.listen([this]() { syncDrag(); }));
     m_listeners.emplace_back(Event::bus()->m_events.input.mouse.move.listen([this]() { syncDrag(); }));
 }
@@ -403,26 +417,81 @@ void CEffectManager::syncDrag() {
     beginWobble(dragged, CURSOR, resizing);
 }
 
-// Whether Hyprland is currently animating the window's own geometry. This is
-// the whole trigger for the elastic effect: we do not care which dispatcher
-// moved the window, only that its rect is on its way somewhere.
+// Whether Hyprland is animating the window's own geometry. This is the trigger
+// for a swap or a reflow: we do not care which dispatcher moved the window,
+// only that its rect is on its way somewhere.
 static bool geometryAnimating(const PHLWINDOW& window) {
     return window->positionAnimation()->isBeingAnimated() || window->sizeAnimation()->isBeingAnimated();
+}
+
+// A workspace does not move its windows to slide — it animates one render
+// offset that every window on it is drawn through. So a window carried to
+// another workspace travels the width of the screen while its own geometry
+// says it never moved.
+static bool workspaceSliding(const PHLWINDOW& window) {
+    const auto WS = window->m_workspace;
+    return WS && WS->m_renderOffset->isBeingAnimated();
+}
+
+// Everything that puts the window somewhere other than where its rect says.
+static Vector2D renderOffsetOf(const PHLWINDOW& window) {
+    const auto WS = window->m_workspace;
+    return WS ? WS->m_renderOffset->value() : Vector2D{};
+}
+
+static bool travelling(const PHLWINDOW& window) {
+    return geometryAnimating(window) || workspaceSliding(window);
+}
+
+void CEffectManager::noteWorkspaceMove(const PHLWINDOW& window) {
+    const auto NOW = std::chrono::steady_clock::now();
+
+    // The window is not on screen yet when the event lands — the workspace it
+    // was sent to still has to become the visible one. So this only marks it,
+    // and the next render pass that finds it visible and sliding arms it.
+    std::erase_if(m_pendingMoves, [&NOW, &window](const auto& p) { //
+        return p.window.expired() || p.window.lock() == window || NOW - p.at > PENDING_MOVE_TTL;
+    });
+
+    m_pendingMoves.emplace_back(SPendingMove{.window = window, .at = NOW});
+}
+
+bool CEffectManager::pendingWorkspaceMove(const PHLWINDOW& window) {
+    const auto NOW = std::chrono::steady_clock::now();
+    const auto IT  = std::ranges::find_if(m_pendingMoves, [&window](const auto& p) { return p.window.lock() == window; });
+
+    if (IT == m_pendingMoves.end())
+        return false;
+
+    // A silent move never brings the window on screen, so its mark is never
+    // taken; it has to age out instead.
+    if (NOW - IT->at > PENDING_MOVE_TTL) {
+        m_pendingMoves.erase(IT);
+        return false;
+    }
+
+    return true;
+}
+
+void CEffectManager::clearWorkspaceMove(const PHLWINDOW& window) {
+    std::erase_if(m_pendingMoves, [&window](const auto& p) { return p.window.expired() || p.window.lock() == window; });
 }
 
 void CEffectManager::scanAnimations(const PHLMONITOR& monitor) {
     if (!m_configOk || !monitor)
         return;
 
-    static auto PENABLED  = CConfigValue<Config::BOOL>(CFG_ELASTIC_ENABLED);
-    static auto PTILED    = CConfigValue<Config::BOOL>(CFG_ELASTIC_TILED);
-    static auto PFLOATING = CConfigValue<Config::BOOL>(CFG_ELASTIC_FLOATING);
+    static auto PENABLED   = CConfigValue<Config::BOOL>(CFG_ELASTIC_ENABLED);
+    static auto PTILED     = CConfigValue<Config::BOOL>(CFG_ELASTIC_TILED);
+    static auto PFLOATING  = CConfigValue<Config::BOOL>(CFG_ELASTIC_FLOATING);
+    static auto PWORKSPACE = CConfigValue<Config::BOOL>(CFG_ELASTIC_WORKSPACE);
 
-    const bool  ENABLED  = m_overrides.elasticEnabled.value_or(*PENABLED);
-    const bool  TILED    = m_overrides.elasticOnTiled.value_or(*PTILED);
-    const bool  FLOATING = m_overrides.elasticOnFloating.value_or(*PFLOATING);
+    const bool  ENABLED   = m_overrides.elasticEnabled.value_or(*PENABLED);
+    const bool  TILED     = m_overrides.elasticOnTiled.value_or(*PTILED);
+    const bool  FLOATING  = m_overrides.elasticOnFloating.value_or(*PFLOATING);
+    const bool  WORKSPACE = m_overrides.elasticOnWorkspace.value_or(*PWORKSPACE);
 
-    if (!ENABLED || (!TILED && !FLOATING))
+    if (!ENABLED || (!TILED && !FLOATING && !WORKSPACE))
         return;
 
     for (const auto& WINDOW : Desktop::windowState()->windows()) {
@@ -434,13 +503,17 @@ void CEffectManager::scanAnimations(const PHLMONITOR& monitor) {
         if (WINDOW->m_animatingIn)
             continue;
 
-        if (WINDOW->m_isFloating ? !FLOATING : !TILED)
+        // The three triggers are independent: a window you throw at another
+        // workspace stretches on the way even if the swap trigger is off.
+        const bool CARRIED = WORKSPACE && pendingWorkspaceMove(WINDOW);
+
+        if (!CARRIED && (WINDOW->m_isFloating ? !FLOATING : !TILED))
             continue;
 
-        if (!geometryAnimating(WINDOW))
+        if (CARRIED ? !travelling(WINDOW) : !geometryAnimating(WINDOW))
             continue;
 
-        const auto FRAME = WINDOW->getWindowMainSurfaceBox();
+        const auto FRAME = WINDOW->getWindowMainSurfaceBox().copy().translate(renderOffsetOf(WINDOW));
         if (FRAME.w <= 1 || FRAME.h <= 1)
             continue;
 
@@ -455,6 +528,9 @@ void CEffectManager::scanAnimations(const PHLMONITOR& monitor) {
         entry->elasticParams = elasticParams();
         entry->elastic.arm(FRAME);
         entry->elasticOn = true;
+
+        if (CARRIED)
+            clearWorkspaceMove(WINDOW);
     }
 }
 
@@ -478,8 +554,14 @@ void CEffectManager::tick(const PHLMONITOR& monitor) {
         entry.lastTick = NOW;
         elapsed        = std::clamp(elapsed, 0.F, MAX_FRAME_MS);
 
-        auto&      state = *entry.state;
-        const auto FRAME = WINDOW->getWindowMainSurfaceBox();
+        auto& state = *entry.state;
+
+        // Everything below works in the space the window is actually drawn in,
+        // which during a workspace slide is not where its own rect says it is.
+        // The offset is zero in every other case, so this costs the wobble
+        // nothing and gets a carried window right.
+        const auto OFFSET = renderOffsetOf(WINDOW);
+        const auto FRAME  = WINDOW->getWindowMainSurfaceBox().copy().translate(OFFSET);
 
         syncFrameGeometry(WINDOW, state);
 
@@ -505,7 +587,7 @@ void CEffectManager::tick(const PHLMONITOR& monitor) {
                 deformed           = entry.wobbly.controlBounds();
             }
         } else if (entry.elasticOn) {
-            const bool ANIMATING = geometryAnimating(WINDOW);
+            const bool ANIMATING = travelling(WINDOW);
 
             entry.elastic.advance(FRAME, elapsed, ANIMATING);
 
@@ -528,7 +610,7 @@ void CEffectManager::tick(const PHLMONITOR& monitor) {
         if (DONE)
             state.offsets = {};
 
-        const auto BOUNDS = unionOf(deformed, WINDOW->getFullWindowBoundingBox());
+        const auto BOUNDS = unionOf(deformed, WINDOW->getFullWindowBoundingBox().copy().translate(OFFSET));
 
         // The control net bounds the frame, but the mesh runs over the whole
         // bounding box and the Bezier *extrapolates* past the net for the

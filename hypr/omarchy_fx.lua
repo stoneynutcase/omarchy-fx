@@ -46,6 +46,17 @@ if not missing then
                 elastic_on_tiled     = true,
                 elastic_on_floating  = false,
 
+                -- Carrying a window to another workspace. A carried window is
+                -- slid across by the workspace's render offset, not by its own
+                -- geometry, so this only ever shows if Hyprland's workspace
+                -- animation is on — and Omarchy ships it off. To turn it on,
+                -- put this in ~/.config/hypr/looknfeel.lua:
+                --
+                --   hl.animation({ leaf = "workspaces", enabled = true,
+                --                  speed = 3, bezier = "easeOutQuint",
+                --                  style = "slide" })
+                elastic_on_workspace = true,
+
                 -- Stretchiness: 0 = taut, 4 = taffy.
                 elastic_stretchiness = 2,
 

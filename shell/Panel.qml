@@ -48,6 +48,7 @@ Panel {
   property bool elasticEnabled: true
   property bool onTiled: true
   property bool onFloating: false
+  property bool onWorkspace: true
   property int  stretchiness: 2
 
   // One mesh resolution for both effects. The plugin keeps a key per effect;
@@ -90,7 +91,7 @@ Panel {
   readonly property var hyprKeys: [
     "wobbly_enabled", "wobbly_on_move", "wobbly_on_resize", "wobbly_wobbliness",
     "wobbly_tessellation", "wobbly_stiffness", "wobbly_drag", "wobbly_move_factor",
-    "elastic_enabled", "elastic_on_tiled", "elastic_on_floating", "elastic_stretchiness",
+    "elastic_enabled", "elastic_on_tiled", "elastic_on_floating", "elastic_on_workspace", "elastic_stretchiness",
     "elastic_tessellation", "elastic_period", "elastic_damping", "elastic_tilt",
     "elastic_follow", "elastic_max_stretch"
   ]
@@ -138,6 +139,7 @@ Panel {
     root.elasticEnabled = effective("elastic_enabled",     "elastic_enabled",     1) != 0
     root.onTiled        = effective("elastic_on_tiled",    "elastic_on_tiled",    1) != 0
     root.onFloating     = effective("elastic_on_floating", "elastic_on_floating", 0) != 0
+    root.onWorkspace    = effective("elastic_on_workspace", "elastic_on_workspace", 1) != 0
     root.stretchiness   = root.clamp5(effective("stretchiness", "elastic_stretchiness", 2))
 
     root.tessellation = Number(effective("wobbly_tessellation", "wobbly_tessellation", 20))
@@ -249,6 +251,7 @@ Panel {
       "elastic_enabled=" + (root.elasticEnabled ? "true" : "false"),
       "elastic_on_tiled=" + (root.onTiled ? "true" : "false"),
       "elastic_on_floating=" + (root.onFloating ? "true" : "false"),
+      "elastic_on_workspace=" + (root.onWorkspace ? "true" : "false"),
       "stretchiness=" + root.stretchiness,
       "wobbly_tessellation=" + root.tessellation,
       "elastic_tessellation=" + root.tessellation,
@@ -562,6 +565,21 @@ Panel {
           fontFamily: root.fontFam
           onClicked: {
             root.onFloating = !root.onFloating
+            root.persist()
+          }
+        }
+
+        Toggle {
+          width: parent.width
+          enabled: root.pluginLoaded && root.elasticEnabled
+          opacity: (root.pluginLoaded && root.elasticEnabled) ? 1 : 0.5
+          label: "Workspace moves"
+          description: "Carrying a window to another workspace. Needs Hyprland's workspace animation, which Omarchy ships off"
+          checked: root.onWorkspace
+          foreground: root.fg
+          fontFamily: root.fontFam
+          onClicked: {
+            root.onWorkspace = !root.onWorkspace
             root.persist()
           }
         }

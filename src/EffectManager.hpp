@@ -24,7 +24,7 @@ namespace OmarchyFX {
         std::optional<int>   wobbliness, wobblyTessellation;
         std::optional<float> wobblyStiffness, wobblyDrag, wobblyMoveFactor;
 
-        std::optional<bool>  elasticEnabled, elasticOnTiled, elasticOnFloating;
+        std::optional<bool>  elasticEnabled, elasticOnTiled, elasticOnFloating, elasticOnWorkspace;
         std::optional<int>   stretchiness, elasticTessellation;
         std::optional<float> elasticPeriod, elasticDamping, elasticTilt, elasticFollow, elasticMaxStretch;
     };
@@ -66,6 +66,13 @@ namespace OmarchyFX {
         // Elasticity: whichever windows Hyprland is animating for us.
         void           scanAnimations(const PHLMONITOR& monitor);
 
+        // ...plus the one case there is nothing to watch for. A window carried
+        // to another workspace is slid there by the workspace's render offset,
+        // so its own geometry never moves and the event is the only signal.
+        void           noteWorkspaceMove(const PHLWINDOW& window);
+        bool           pendingWorkspaceMove(const PHLWINDOW& window);
+        void           clearWorkspaceMove(const PHLWINDOW& window);
+
         void           tick(const PHLMONITOR& monitor);
 
         SEntry*        find(const PHLWINDOW& window);
@@ -79,7 +86,13 @@ namespace OmarchyFX {
         static std::string settingsPath();
         void               loadSettings();
 
+        struct SPendingMove {
+            PHLWINDOWREF                          window;
+            std::chrono::steady_clock::time_point at;
+        };
+
         bool                             m_configOk = false;
+        std::vector<SPendingMove>        m_pendingMoves;
         SOverrides                       m_overrides;
 
         // A list, not a vector: find() and ensureEntry() hand out pointers into

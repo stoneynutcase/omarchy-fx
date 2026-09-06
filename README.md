@@ -149,6 +149,7 @@ The five presets are KWin's, verbatim:
 | `elastic_enabled` | `true` | Master switch |
 | `elastic_on_tiled` | `true` | React when the layout animates a tiled window |
 | `elastic_on_floating` | `false` | React when something animates a floating window |
+| `elastic_on_workspace` | `true` | Stretch a window you carry to another workspace and follow |
 | `elastic_stretchiness` | `2` | Preset: `0` = taut, `4` = taffy |
 | `elastic_tessellation` | `20` | Render mesh quads per axis (2–64) |
 | `elastic_period` | `-1` | Override the spring period in ms; `-1` inherits |
@@ -211,6 +212,13 @@ follow instantly, so they trail; when the rect stops they overshoot and ring
 themselves flat. The spring is stated as a period and a damping ratio, because
 those are the two things you actually want to dial: how fast it snaps back, and
 how much it rings.
+
+Carrying a window to another workspace is the one case this cannot see by
+watching geometry: a workspace does not move its windows to slide, it animates
+one render offset that every window on it is drawn through, so the window's own
+rect never moves. That case is picked up from the `moveToWorkspace` event
+instead, and the lattice then works in the offset space the window is really
+drawn in.
 
 A lattice of identical springs would only ever lag as a rigid block — every
 point lags equally, and the window merely trails without changing shape. The
@@ -305,6 +313,11 @@ effect by Cédric Borgese, GPL-2.0-or-later.
   so during an effect the two disagree by up to the current offset.
 - Window open and close animations are left alone; they animate the geometry
   from nothing, and stretching that fights the animation rather than dressing it.
+- `elastic_on_workspace` rides Hyprland's workspace slide, and Omarchy ships
+  that animation disabled (`hl.animation({ leaf = "workspaces", enabled = false })`
+  in its default `looknfeel.lua`). Without it a workspace switch is instant,
+  there is no travel to dress, and the setting does nothing. Re-enable it in
+  your own `~/.config/hypr/looknfeel.lua`, which loads after Omarchy's defaults.
 - Written against the Hyprland 0.56 plugin API.
 
 ## License
