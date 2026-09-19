@@ -1,6 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Build omarchy-fx and wire it into the Omarchy Hyprland config.
 set -euo pipefail
+
+# Every tool below comes from the system directories, not from whatever PATH
+# the caller had, and nothing inherited can redirect the loader or the shell.
+export PATH=/usr/local/bin:/usr/bin:/bin
+unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV CDPATH GLOBIGNORE
+for f in $(compgen -A function); do unset -f "$f"; done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hyprland/plugins"
@@ -78,23 +84,43 @@ make -C "$REPO"
 # has it open, and only new loads see the new binary.
 echo ":: installing to $PLUGIN_DIR"
 mkdir -p "$PLUGIN_DIR"
-install -m 0755 "$REPO/omarchy-fx.so" "$PLUGIN_SO.new"
-mv -f "$PLUGIN_SO.new" "$PLUGIN_SO"
+# The staging name is random, so nothing planted at a guessable path can be
+# written through, and rename(2) replaces whatever is at the final name —
+# a symlink included — rather than following it.
+STAGED="$(mktemp "$PLUGIN_DIR/.omarchy-fx.XXXXXXXX")"
+install -m 0755 "$REPO/omarchy-fx.so" "$STAGED"
+mv -f "$STAGED" "$PLUGIN_SO"
 
 if (( PLUGIN_ONLY )); then
   echo ":: rebuilt $PLUGIN_SO"
   exit 0
 fi
 
+# A backup is a fresh random-named file next to the original: never a
+# guessable name something else could have put a symlink at.
+backup() {
+  local bak
+  bak="$(mktemp "$1.bak.XXXXXXXX")"
+  cat -- "$1" >"$bak"
+  echo "$bak"
+}
+
 echo ":: installing config to $HYPR_DIR/omarchy_fx.lua"
 mkdir -p "$HYPR_DIR"
 if [[ -e "$HYPR_DIR/omarchy_fx.lua" ]]; then
-  cp "$HYPR_DIR/omarchy_fx.lua" "$HYPR_DIR/omarchy_fx.lua.bak.$(date +%s)"
+  backup "$HYPR_DIR/omarchy_fx.lua" >/dev/null
 fi
 install -m 0644 "$REPO/hypr/omarchy_fx.lua" "$HYPR_DIR/omarchy_fx.lua"
 
+# hyprland.lua is the user's own file and is appended to in place, which
+# follows a symlink on purpose: dotfile setups keep it as one. What it is not
+# allowed to be is someone else's file.
 if [[ -f "$ENTRY" ]] && ! grep -qF "$SNIPPET" "$ENTRY"; then
-  cp "$ENTRY" "$ENTRY.bak.$(date +%s)"
+  if [[ ! -O "$ENTRY" ]]; then
+    echo "error: $ENTRY is not owned by you; not touching it." >&2
+    exit 1
+  fi
+  backup "$ENTRY" >/dev/null
   printf '\n-- omarchy-fx: window effects\n%s\n' "$SNIPPET" >>"$ENTRY"
   echo ":: added '$SNIPPET' to $ENTRY (backup kept alongside it)"
 fi
@@ -147,16 +173,31 @@ if (( WANT_HOOK )); then
     echo ":: not a pacman system, skipping the rebuild hook"
   else
     echo ":: installing the rebuild hook (needs root)"
+
+    # The runner is executed by root. The four values baked into it are
+    # shell-quoted with printf %q, so a path with a quote, a dollar or a
+    # space in it is a string in the script rather than code — and a newline
+    # in one is refused outright, since %q would keep it but the file would
+    # not read as intended.
+    for v in "$REPO" "$HOME" "$PLUGIN_SO"; do
+      if [[ "$v" == *$'\n'* ]]; then
+        echo "error: a path with a newline in it cannot go in the rebuild hook." >&2
+        exit 1
+      fi
+    done
     TMP_RUNNER="$(mktemp)"
-    sed -e "s|@REPO@|$REPO|g" \
-        -e "s|@USER@|$(id -un)|g" \
-        -e "s|@HOME@|$HOME|g" \
-        -e "s|@PLUGIN_SO@|$PLUGIN_SO|g" \
-        "$REPO/pacman/omarchy-fx-rebuild.in" >"$TMP_RUNNER"
+    while IFS= read -r line; do
+      if [[ "$line" == "# @CONFIG@" ]]; then
+        printf 'REPO=%q\nRUN_AS=%q\nRUN_HOME=%q\nPLUGIN_SO=%q\n' "$REPO" "$(id -un)" "$HOME" "$PLUGIN_SO"
+      else
+        printf '%s\n' "$line"
+      fi
+    done <"$REPO/pacman/omarchy-fx-rebuild.in" >"$TMP_RUNNER"
 
     # One root call for both files: pkexec asks for the password on every
-    # invocation, so two calls would mean two dialogs.
-    if as_root sh -c 'install -Dm 0755 "$1" "$2" && install -Dm 0644 "$3" "$4"' _ \
+    # invocation, so two calls would mean two dialogs. `install` unlinks the
+    # destination before creating it, so it never writes through a link.
+    if as_root /bin/sh -c 'install -Dm 0755 "$1" "$2" && install -Dm 0644 "$3" "$4"' _ \
          "$TMP_RUNNER" "$RUNNER" "$REPO/pacman/95-omarchy-fx-rebuild.hook" "$HOOK"; then
       echo "   $HOOK"
       echo "   $RUNNER"

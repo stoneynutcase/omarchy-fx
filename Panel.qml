@@ -104,6 +104,31 @@ Panel {
 
   readonly property string settingsPath: Quickshell.env("HOME") + "/.config/omarchy/omarchy-fx.conf"
 
+  // Every process this panel starts gets this environment and nothing else:
+  // what hyprctl needs to find the compositor, what a build needs to find its
+  // tools, and the XDG paths install.sh honours. PATH is fixed to the system
+  // directories, and loader or shell variables inherited by the shell never
+  // reach a child. Tools are named by absolute path below for the same reason.
+  readonly property var procEnv: {
+    var env = { PATH: "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8" }
+    // OMARCHY_PATH is how the omarchy CLI finds itself; install.sh calls it
+    // to enable the widget.
+    var keep = ["HOME", "USER", "LOGNAME", "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME",
+                "HYPRLAND_INSTANCE_SIGNATURE", "DBUS_SESSION_BUS_ADDRESS", "WAYLAND_DISPLAY", "OMARCHY_PATH"]
+    for (var i = 0; i < keep.length; i++) {
+      var v = Quickshell.env(keep[i])
+      if (v !== undefined && v !== null && String(v) !== "") env[keep[i]] = String(v)
+    }
+    return env
+  }
+
+  // The build log goes in the per-user runtime directory, which is private,
+  // never in the shared /tmp where a guessable name can be a planted link.
+  readonly property string installLog: {
+    var rt = Quickshell.env("XDG_RUNTIME_DIR")
+    return rt ? String(rt) + "/omarchy-fx-install.log" : "/dev/null"
+  }
+
   // Every option registerConfig() registers, under plugin:omarchy-fx:. The
   // query below and the did-it-register check both read off this one list.
   readonly property var hyprKeys: [
@@ -346,7 +371,9 @@ Panel {
 
   Process {
     id: loadedProc
-    command: ["hyprctl", "plugin", "list"]
+    command: ["/usr/bin/hyprctl", "plugin", "list"]
+    clearEnvironment: true
+    environment: root.procEnv
     function restart() { running = false; running = true }
     onRunningChanged: if (!running && !loadedCollector.sawOutput) root.pluginLoaded = false
     stdout: StdioCollector {
@@ -414,15 +441,17 @@ Panel {
   // the explicit load covers a plugin that was declared before.
   Process {
     id: installProc
-    command: ["bash", "-c",
-      'cd "$1" && ./install.sh >/tmp/omarchy-fx-install.log 2>&1 || exit 1; ' +
+    clearEnvironment: true
+    environment: root.procEnv
+    command: ["/bin/bash", "-c",
+      'cd "$1" && ./install.sh >"$2" 2>&1 || exit 1; ' +
       'so="${XDG_DATA_HOME:-$HOME/.local/share}/hyprland/plugins/omarchy-fx.so"; ' +
-      'hyprctl plugin unload "$so" >/dev/null 2>&1; hyprctl reload >/dev/null 2>&1; ' +
-      'hyprctl plugin list | grep -q omarchy-fx || hyprctl plugin load "$so" >/dev/null 2>&1; exit 0',
-      "_", root.pluginDir]
+      '/usr/bin/hyprctl plugin unload "$so" >/dev/null 2>&1; /usr/bin/hyprctl reload >/dev/null 2>&1; ' +
+      '/usr/bin/hyprctl plugin list | /usr/bin/grep -q omarchy-fx || /usr/bin/hyprctl plugin load "$so" >/dev/null 2>&1; exit 0',
+      "_", root.pluginDir, root.installLog]
     onExited: function(code) {
       root.installing = false
-      root.installStatus = code === 0 ? "" : "Build failed. See /tmp/omarchy-fx-install.log"
+      root.installStatus = code === 0 ? "" : "Build failed. See " + root.installLog
       root.refresh()
     }
   }
@@ -430,10 +459,12 @@ Panel {
   // The Hyprland-config side of the fallback chain, as one JSON object.
   Process {
     id: hyprProc
-    command: ["sh", "-c",
+    clearEnvironment: true
+    environment: root.procEnv
+    command: ["/bin/sh", "-c",
       'sep=""; printf "{"; ' +
       'for k in ' + root.hyprKeys.join(" ") + '; do ' +
-      '  v=$(hyprctl -j getoption "plugin:omarchy-fx:$k" 2>/dev/null); ' +
+      '  v=$(/usr/bin/hyprctl -j getoption "plugin:omarchy-fx:$k" 2>/dev/null); ' +
       '  case "$v" in "{"*) printf "%s\\"%s\\":%s" "$sep" "$k" "$v"; sep=",";; esac; ' +
       'done; printf "}"']
     stdout: StdioCollector {
@@ -445,7 +476,9 @@ Panel {
   Process {
     id: reloadProc
     // Stock reload; the plugin re-reads the settings file on config.reloaded.
-    command: ["hyprctl", "reload"]
+    command: ["/usr/bin/hyprctl", "reload"]
+    clearEnvironment: true
+    environment: root.procEnv
     onExited: root.refresh()
   }
 

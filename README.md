@@ -103,6 +103,58 @@ Hyprland asks for permission the first time a plugin is loaded. The installed
 config also declares `hl.permission({ ..., type = "plugin", mode = "allow" })`
 so later launches don't prompt.
 
+## What it touches
+
+Everything this plugin writes, runs or reads outside its own checkout, so the
+scope can be checked rather than trusted.
+
+**Network:** none. Nothing here opens a socket. There is no telemetry, no
+update check, no download; the build uses only the headers and libraries
+already on the machine.
+
+**Written as you, by `install.sh`:**
+
+| Path | What |
+| --- | --- |
+| `~/.local/share/hyprland/plugins/omarchy-fx.so` | the compositor plugin, staged under a random name and renamed into place |
+| `~/.config/hypr/omarchy_fx.lua` | the config fragment, with a random-named backup of any previous one beside it |
+| `~/.config/hypr/hyprland.lua` | one `require` line appended, with a backup beside it; refused if the file is not yours |
+| `~/.config/omarchy/plugins/omarchy-fx/` | the bar widget, unless that directory *is* this checkout |
+| `~/.config/omarchy/shell.json` | via `omarchy plugin enable`, on first install only |
+
+**Written as you, by the panel:** `~/.config/omarchy/omarchy-fx.conf`, the
+settings file, through Quickshell's atomic write. The "build and install"
+button runs `install.sh` and logs to `$XDG_RUNTIME_DIR/omarchy-fx-install.log`.
+
+**Written as root, by `install.sh` with your consent** (a sudo or polkit
+prompt; skip it with `--no-hook`):
+
+| Path | What |
+| --- | --- |
+| `/etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook` | the trigger, copied verbatim from `pacman/` |
+| `/usr/local/bin/omarchy-fx-rebuild` | the runner, generated from `pacman/omarchy-fx-rebuild.in` with four paths filled in |
+
+The runner is the only code that ever runs as root, on every Hyprland update.
+Root does three things in it: checks that the checkout exists, drops to your
+user with `runuser` and an environment built from scratch, and reports. The
+build, the install of the `.so` and the disarming of a stale one all run as
+you. The four paths baked in are shell-quoted with `printf %q`, so a path with
+a quote or a `$` in it is a string, never code.
+
+**Environment and tools:** the scripts set `PATH` to the system directories
+and drop loader and shell variables rather than inherit them, and the runner
+starts the user side from an empty environment. The panel starts every
+process with a cleared environment and passes only what `hyprctl` and a
+build need, and names its tools by absolute path.
+
+**Read:** the compositor plugin reads `~/.config/omarchy/omarchy-fx.conf`
+and `~/.config/omarchy/shell.json`, and the cursor theme for shake-to-find.
+It writes nothing.
+
+`uninstall.sh` removes everything in the tables above, asking for root once
+for the two hook files. It edits `hyprland.lua` in place through a symlink
+if it is one, so a dotfile setup survives, and only if the file is yours.
+
 ## Turning it off, and removing it
 
 On an Omarchy shell, **the bar widget is the switch**. Middle-click it to turn

@@ -1,6 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Remove omarchy-fx from the running compositor and from the Omarchy config.
 set -euo pipefail
+
+# Same footing as install.sh: system tools only, nothing inherited that could
+# redirect the loader or the shell.
+export PATH=/usr/local/bin:/usr/bin:/bin
+unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT BASH_ENV ENV CDPATH GLOBIGNORE
+for f in $(compgen -A function); do unset -f "$f"; done
 
 PLUGIN_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/hyprland/plugins"
 HYPR_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
@@ -65,10 +71,18 @@ for id in "${SHELL_IDS[@]}"; do
 done
 command -v omarchy-shell >/dev/null 2>&1 && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
+# The user's own file, edited in place. --follow-symlinks keeps a dotfile
+# symlink a symlink instead of replacing it with a copy; the ownership check
+# is what stops this from ever editing someone else's file through one.
 if [[ -f "$ENTRY" ]] && grep -qF "$SNIPPET" "$ENTRY"; then
-  cp "$ENTRY" "$ENTRY.bak.$(date +%s)"
-  sed -i "/^-- omarchy-fx: \(wobbly windows\|window effects\)$/d;\\|^$(printf '%s' "$SNIPPET" | sed 's/[][\\.*^$/]/\\&/g')\$|d" "$ENTRY"
-  echo ":: removed '$SNIPPET' from $ENTRY (backup kept alongside it)"
+  if [[ ! -O "$ENTRY" ]]; then
+    echo "warning: $ENTRY is not owned by you; remove '$SNIPPET' from it by hand." >&2
+  else
+    bak="$(mktemp "$ENTRY.bak.XXXXXXXX")"
+    cat -- "$ENTRY" >"$bak"
+    sed -i --follow-symlinks "/^-- omarchy-fx: \(wobbly windows\|window effects\)$/d;\\|^$(printf '%s' "$SNIPPET" | sed 's/[][\\.*^$/]/\\&/g')\$|d" "$ENTRY"
+    echo ":: removed '$SNIPPET' from $ENTRY (backup kept alongside it)"
+  fi
 fi
 
 echo "Done."

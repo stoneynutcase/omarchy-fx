@@ -1,10 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Rebuild omarchy-fx after a Hyprland update.
 #
 # Generated from pacman/omarchy-fx-rebuild.in by omarchy-fx's install.sh, which
-# substitutes the paths below, and driven by the PostTransaction hook in
-# /etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook. Do not edit in place — a
-# reinstall overwrites it.
+# fills in the four values at the @CONFIG@ marker (shell-quoted), and driven
+# by the PostTransaction hook in /etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook.
+# Do not edit in place — a reinstall overwrites it.
+#
+# This runs as root, because pacman hooks do. Root does three things here and
+# no more: checks that the checkout exists, hands off to the user, and reports.
+# Everything that touches the user's files — the build, the install of the .so,
+# and disarming a stale one — runs as the user, with a minimal environment.
 #
 # Why this exists: Hyprland's plugin ABI is not stable. A plugin built against
 # the old headers faults inside pluginInit when the new Hyprland tries to load
@@ -16,20 +21,29 @@
 #   - never fail the pacman transaction; warn instead
 #   - if the rebuild fails, disarm the stale .so rather than leave it loadable
 set -uo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin
 
-REPO="@REPO@"
-RUN_AS="@USER@"
-RUN_HOME="@HOME@"
-PLUGIN_SO="@PLUGIN_SO@"
+# @CONFIG@
 
 log() { printf 'omarchy-fx: %s\n' "$*" >&2; }
 
+# Everything below root's own three lines runs as the user: a hook's
+# environment is not a login shell's, so the environment is built from
+# scratch rather than inherited, and absolute paths throughout.
+as_user() {
+  /usr/bin/runuser -u "$RUN_AS" -- /usr/bin/env -i \
+    PATH=/usr/local/bin:/usr/bin:/bin HOME="$RUN_HOME" USER="$RUN_AS" LOGNAME="$RUN_AS" LANG=C.UTF-8 \
+    "$@"
+}
+
 # Park the stale binary so the next login cannot try to load it. Wobbly windows
-# are worth a great deal less than a session that comes up.
+# are worth a great deal less than a session that comes up. The user's file,
+# moved by the user: `mv` renames the name, so a link at it is moved, not
+# followed.
 disarm() {
-  [[ -e "$PLUGIN_SO" ]] || return 0
-  if mv -f "$PLUGIN_SO" "$PLUGIN_SO.stale"; then
-    log "moved the stale plugin to $(basename "$PLUGIN_SO").stale so it cannot"
+  as_user /bin/bash -c '[[ -e "$1" ]] || exit 0; mv -f -- "$1" "$1.stale"' _ "$PLUGIN_SO"
+  if [[ $? -eq 0 ]]; then
+    log "moved the stale plugin to $(basename -- "$PLUGIN_SO").stale so it cannot"
     log "break your next login. Rebuild it with '$REPO/install.sh'."
   else
     log "COULD NOT move the stale plugin aside. Before rebooting, either run"
@@ -43,11 +57,9 @@ if [[ ! -d "$REPO" ]]; then
   exit 0
 fi
 
-# Pacman runs hooks as root, but the build and its ~/.local install target
-# belong to the user. HOME is passed explicitly rather than inheriting root's.
-# Absolute paths throughout: a hook's environment is not a login shell's, and
-# the failure mode for a silently skipped rebuild is an unbootable session.
-if /usr/bin/runuser -u "$RUN_AS" -- /usr/bin/env HOME="$RUN_HOME" "$REPO/install.sh" --plugin-only; then
+# The failure mode for a silently skipped rebuild is an unbootable session, so
+# this is loud either way.
+if as_user "$REPO/install.sh" --plugin-only; then
   log "rebuilt against the new Hyprland."
 else
   log "REBUILD FAILED."
