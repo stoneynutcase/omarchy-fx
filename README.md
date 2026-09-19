@@ -20,6 +20,10 @@ plugin. Three of them so far, all built on the same deformable mesh:
 And one extra that is not a window effect: **shake to find the cursor** —
 shake the pointer and it grows until you stop, as in KDE Plasma.
 
+![A window's edge bowing mid-swap, the cursor magnified by a shake, and the settings panel](preview.png)
+
+*Caught mid-swap: the right window's edge still bowing from the elastic move, the cursor three times its size after a shake, and the panel that drives it all.*
+
 ## Why the effects are a Hyprland plugin, not an Omarchy shell plugin
 
 Omarchy shell plugins (`~/.config/omarchy/plugins/`) are Quickshell/QML and draw
@@ -86,6 +90,8 @@ On an Omarchy shell it also installs the bar widget to
 which case there is nothing to copy. Re-running the installer leaves the
 placement alone, so `omarchy bar move omarchy-fx` sticks. Click the widget for
 the settings panel, middle-click it to turn every effect off and on.
+
+![The settings panel: tabs per effect, a master toggle, trigger chips and a strength slider](docs/panel.png)
 
 > Upgrading from the version that had only the wobble: the widget used to be
 > `omarchy-fx.wobbly`, one widget per effect. The installer disables and removes
