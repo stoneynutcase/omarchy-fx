@@ -51,6 +51,12 @@ Panel {
   property bool onWorkspace: true
   property int  stretchiness: 2
 
+  property bool pulseEnabled: true
+  property bool onSwitch: true
+  property bool onClick: true
+  property bool onHover: false
+  property int  pulseStrength: 2
+
   // One mesh resolution for both effects. The plugin keeps a key per effect;
   // this writes them together, because "how finely is the window tessellated"
   // is a rendering cost, not a per-effect taste.
@@ -58,7 +64,7 @@ Panel {
 
   // Anything on at all? That is what the bar icon and the middle-click toggle
   // act on.
-  readonly property bool enabled: root.wobblyEnabled || root.elasticEnabled
+  readonly property bool enabled: root.wobblyEnabled || root.elasticEnabled || root.pulseEnabled
 
   // Read-only echo of what the physics is actually running with, so a value
   // set in Lua is visible here rather than silently contradicting the sliders.
@@ -70,8 +76,13 @@ Panel {
   property real damping: 0.55
   property real maxStretch: 65
 
+  property real pulseAmount: 9
+  property real pulsePeriod: 260
+  property real pulseDamping: 0.55
+
   readonly property var wobblinessNames:  ["Rigid", "Subtle", "Springy", "Loose", "Jelly"]
   readonly property var stretchinessNames: ["Taut", "Springy", "Elastic", "Rubber", "Taffy"]
+  readonly property var pulseNames:        ["Subtle", "Soft", "Firm", "Lively", "Bouncy"]
 
   // KWin's pset[0..4]. Mirrors wobblyPreset() in src/WobblyModel.cpp.
   readonly property var presetStiffness: [0.15, 0.10, 0.06, 0.03, 0.01]
@@ -84,6 +95,11 @@ Panel {
   readonly property var presetDamping:    [0.80, 0.65, 0.55, 0.45, 0.35]
   readonly property var presetMaxStretch: [30, 45, 65, 90, 130]
 
+  // Mirrors pulsePreset() in src/PulseModel.cpp.
+  readonly property var presetPulseAmount:  [4, 6, 9, 13, 18]
+  readonly property var presetPulsePeriod:  [180, 220, 260, 300, 340]
+  readonly property var presetPulseDamping: [0.90, 0.70, 0.55, 0.42, 0.32]
+
   readonly property string settingsPath: Quickshell.env("HOME") + "/.config/omarchy/omarchy-fx.conf"
 
   // Every option registerConfig() registers, under plugin:omarchy-fx:. The
@@ -93,7 +109,9 @@ Panel {
     "wobbly_tessellation", "wobbly_stiffness", "wobbly_drag", "wobbly_move_factor",
     "elastic_enabled", "elastic_on_tiled", "elastic_on_floating", "elastic_on_workspace", "elastic_stretchiness",
     "elastic_tessellation", "elastic_period", "elastic_damping", "elastic_tilt",
-    "elastic_follow", "elastic_max_stretch"
+    "elastic_follow", "elastic_max_stretch",
+    "pulse_enabled", "pulse_on_switch", "pulse_on_click", "pulse_on_hover", "pulse_strength",
+    "pulse_tessellation", "pulse_amount", "pulse_period", "pulse_damping"
   ]
 
   // Settings-file keys as the panel wrote them before there was more than one
@@ -161,6 +179,20 @@ Panel {
     root.period     = pe >= 0 ? pe : root.presetPeriod[root.stretchiness]
     root.damping    = da >= 0 ? da : root.presetDamping[root.stretchiness]
     root.maxStretch = ms >= 0 ? ms : root.presetMaxStretch[root.stretchiness]
+
+    root.pulseEnabled  = effective("pulse_enabled",   "pulse_enabled",   1) != 0
+    root.onSwitch      = effective("pulse_on_switch", "pulse_on_switch", 1) != 0
+    root.onClick       = effective("pulse_on_click",  "pulse_on_click",  1) != 0
+    root.onHover       = effective("pulse_on_hover",  "pulse_on_hover",  0) != 0
+    root.pulseStrength = root.clamp5(effective("pulse_strength", "pulse_strength", 2))
+
+    var pa = Number(effective("pulse_amount",  "pulse_amount",  -1))
+    var pp = Number(effective("pulse_period",  "pulse_period",  -1))
+    var pd = Number(effective("pulse_damping", "pulse_damping", -1))
+
+    root.pulseAmount  = pa >= 0 ? pa : root.presetPulseAmount[root.pulseStrength]
+    root.pulsePeriod  = pp >= 0 ? pp : root.presetPulsePeriod[root.pulseStrength]
+    root.pulseDamping = pd >= 0 ? pd : root.presetPulseDamping[root.pulseStrength]
   }
 
   // key=value, '#' starts a comment. Mirrors CEffectManager::loadSettings().
@@ -253,8 +285,14 @@ Panel {
       "elastic_on_floating=" + (root.onFloating ? "true" : "false"),
       "elastic_on_workspace=" + (root.onWorkspace ? "true" : "false"),
       "stretchiness=" + root.stretchiness,
+      "pulse_enabled=" + (root.pulseEnabled ? "true" : "false"),
+      "pulse_on_switch=" + (root.onSwitch ? "true" : "false"),
+      "pulse_on_click=" + (root.onClick ? "true" : "false"),
+      "pulse_on_hover=" + (root.onHover ? "true" : "false"),
+      "pulse_strength=" + root.pulseStrength,
       "wobbly_tessellation=" + root.tessellation,
       "elastic_tessellation=" + root.tessellation,
+      "pulse_tessellation=" + root.tessellation,
       ""
     ]
     settingsFile.setText(lines.join("\n"))
@@ -271,6 +309,7 @@ Panel {
     var next = !root.enabled
     root.wobblyEnabled = next
     root.elasticEnabled = next
+    root.pulseEnabled = next
     persist()
   }
 
@@ -433,10 +472,11 @@ Panel {
   // Which tab is showing. Not persisted: the panel opens on the wobble, the
   // effect people come for, and the other two are a click away.
   property string tab: "wobbly"
-  // Glyphs are Nerd Font: nf-md-waves, nf-fa-arrows_h, nf-md-grid.
+  // Glyphs are Nerd Font: nf-md-waves, nf-fa-arrows_h, nf-fa-dot_circle_o, nf-md-grid.
   readonly property var tabs: [
     { value: "wobbly",  label: "Wobbly",  icon: "󰞍" },
     { value: "elastic", label: "Elastic", icon: "" },
+    { value: "pulse",   label: "Pulse",   icon: "" },
     { value: "mesh",    label: "Mesh",    icon: "󰋁" }
   ]
 
@@ -447,7 +487,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(340))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
     PanelKeyCatcher {
@@ -645,6 +685,82 @@ Panel {
             text: "period " + Math.round(root.period) + " ms"
               + " · damping " + root.damping.toFixed(2)
               + " · max stretch " + Math.round(root.maxStretch) + " px"
+          }
+        }
+
+        // ---- pulse ----------------------------------------------------------
+
+        Column {
+          width: parent.width
+          spacing: Style.space(10)
+          visible: root.tab === "pulse"
+
+          Toggle {
+            width: parent.width
+            enabled: root.pluginLoaded
+            opacity: root.pluginLoaded ? 1 : 0.5
+            label: "Focus pulse"
+            description: "Swell the window that just became active"
+            checked: root.pulseEnabled
+            foreground: root.fg
+            fontFamily: root.fontFam
+            onClicked: {
+              root.pulseEnabled = !root.pulseEnabled
+              root.persist()
+            }
+          }
+
+          PanelSectionHeader {
+            width: parent.width
+            text: "Pulse on"
+            foreground: root.fg
+            fontFamily: root.fontFam
+          }
+
+          Flow {
+            width: parent.width
+            spacing: Style.spacing.md
+
+            OptionChip {
+              text: "Switch"
+              tooltipText: "Keyboard, a dispatcher, or focus moving on its own"
+              live: root.pluginLoaded && root.pulseEnabled
+              on: root.onSwitch
+              onClicked: { root.onSwitch = !root.onSwitch; root.persist() }
+            }
+
+            OptionChip {
+              text: "Click"
+              tooltipText: "A click that gives a window focus"
+              live: root.pluginLoaded && root.pulseEnabled
+              on: root.onClick
+              onClicked: { root.onClick = !root.onClick; root.persist() }
+            }
+
+            OptionChip {
+              text: "Hover"
+              tooltipText: "Focus following the mouse. Every tile you cross will swell"
+              live: root.pluginLoaded && root.pulseEnabled
+              on: root.onHover
+              onClicked: { root.onHover = !root.onHover; root.persist() }
+            }
+          }
+
+          EffectSlider {
+            hostBar: root.bar
+            caption: "Strength"
+            valueText: root.pulseNames[root.clamp5(root.pulseStrength)]
+            live: root.pluginLoaded && root.pulseEnabled
+            value: root.pulseStrength
+            onPicked: function(v) { root.pulseStrength = v; root.persistSoon() }
+            onCommitted: function(v) { root.pulseStrength = v; root.persist() }
+          }
+
+          Hint {
+            visible: root.pluginLoaded && !root.configError
+            text: "swell " + Math.round(root.pulseAmount) + " px"
+              + " · period " + Math.round(root.pulsePeriod) + " ms"
+              + " · damping " + root.pulseDamping.toFixed(2)
           }
         }
 

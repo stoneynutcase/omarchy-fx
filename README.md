@@ -1,7 +1,7 @@
 # omarchy-fx
 
 Window effects for [Omarchy](https://omarchy.org/), as a Hyprland compositor
-plugin. Two of them so far, both built on the same deformable mesh:
+plugin. Three of them so far, all built on the same deformable mesh:
 
 - **Wobbly windows** — grab a window with `SUPER` + a mouse button and it
   deforms like a sheet of jelly while it follows the cursor, then springs back
@@ -12,6 +12,10 @@ plugin. Two of them so far, both built on the same deformable mesh:
   the window stretches like rubber as it travels and springs back when it
   arrives. Swapping two tiled windows is the obvious case; so is the reflow
   when a window opens or closes, and a keyboard resize.
+- **Focus pulse** — the window that just became active swells out a few
+  pixels and settles back, so your eye finds where focus went. On by default
+  for keyboard and click focus changes, off for focus that merely follows the
+  mouse.
 
 ## Why the effects are a Hyprland plugin, not an Omarchy shell plugin
 
@@ -192,6 +196,31 @@ The five presets are KWin's, verbatim:
 | 2 | Elastic | 180 ms | 0.55 | 0.65 | 0.55 | 65 px |
 | 3 | Rubber | 235 ms | 0.45 | 0.78 | 0.68 | 90 px |
 | 4 | Taffy | 310 ms | 0.35 | 0.88 | 0.80 | 130 px |
+
+### Focus pulse
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `pulse_enabled` | `true` | Master switch |
+| `pulse_on_switch` | `true` | Pulse when focus moves by keyboard, by a dispatcher, or on its own (a window closed, a workspace changed) |
+| `pulse_on_click` | `true` | Pulse when a click gives a window focus |
+| `pulse_on_hover` | `false` | Pulse when focus follows the mouse. Off because with `follow_mouse` every tile you cross would swell |
+| `pulse_strength` | `2` | Preset: `0` = subtle, `4` = bouncy |
+| `pulse_tessellation` | `20` | Render mesh quads per axis (2–64) |
+| `pulse_amount` | `-1` | Override how far the edges swell at the peak, in px; `-1` inherits |
+| `pulse_period` | `-1` | Override the swell period in ms; `-1` inherits |
+| `pulse_damping` | `-1` | Override the damping ratio; `-1` inherits |
+
+| `pulse_strength` | | amount | period | damping |
+| --- | --- | --- | --- | --- |
+| 0 | Subtle | 4 px | 180 ms | 0.90 |
+| 1 | Soft | 6 px | 220 ms | 0.70 |
+| 2 | Firm | 9 px | 260 ms | 0.55 |
+| 3 | Lively | 13 px | 300 ms | 0.42 |
+| 4 | Bouncy | 18 px | 340 ms | 0.32 |
+
+A window that fills its monitor never pulses; there is nowhere for it to swell
+to. Neither does one that is still playing its open animation.
 
 The file guards the `hl.config` call with `hl.get_config`, because plugin
 options don't exist during the config pass that loads the plugin. Hyprland

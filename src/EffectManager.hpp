@@ -2,9 +2,11 @@
 
 #include "ElasticModel.hpp"
 #include "MeshTransformer.hpp"
+#include "PulseModel.hpp"
 #include "WobblyModel.hpp"
 
 #include <hyprland/src/desktop/DesktopTypes.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/helpers/signal/Signal.hpp>
 
 #include <chrono>
@@ -28,15 +30,19 @@ namespace OmarchyFX {
         std::optional<bool>  elasticEnabled, elasticOnTiled, elasticOnFloating, elasticOnWorkspace;
         std::optional<int>   stretchiness, elasticTessellation;
         std::optional<float> elasticPeriod, elasticDamping, elasticTilt, elasticFollow, elasticMaxStretch;
+
+        std::optional<bool>  pulseEnabled, pulseOnSwitch, pulseOnClick, pulseOnHover;
+        std::optional<int>   pulseStrength, pulseTessellation;
+        std::optional<float> pulseAmount, pulsePeriod, pulseDamping;
     };
 
     // Drives every effect in the plugin. A window gets at most one entry, and an
     // entry carries one mesh, one transformer and whichever simulations are
     // running on it.
     //
-    // The two effects are mutually exclusive on a given window, and the wobble
+    // The effects are mutually exclusive on a given window, and the wobble
     // wins: while you are dragging something, that drag is the only thing that
-    // should be deforming it.
+    // should be deforming it. The other two let whichever is running finish.
     class CEffectManager {
       public:
         void registerConfig();
@@ -58,6 +64,10 @@ namespace OmarchyFX {
             CElasticModel                         elastic;
             SElasticParams                        elasticParams;
             bool                                  elasticOn = false;
+
+            CPulseModel                           pulse;
+            SPulseParams                          pulseParams;
+            bool                                  pulseOn = false;
         };
 
         // Wobble: whichever window the pointer is dragging.
@@ -74,6 +84,9 @@ namespace OmarchyFX {
         bool           pendingWorkspaceMove(const PHLWINDOW& window);
         void           clearWorkspaceMove(const PHLWINDOW& window);
 
+        // Pulse: whichever window just became the active one.
+        void           onFocus(const PHLWINDOW& window, Desktop::eFocusReason reason);
+
         void           tick(const PHLMONITOR& monitor);
 
         SEntry*        find(const PHLWINDOW& window);
@@ -82,6 +95,7 @@ namespace OmarchyFX {
 
         SWobblyParams  wobblyParams() const;
         SElasticParams elasticParams() const;
+        SPulseParams   pulseParams() const;
 
         // Settings file, shared with the shell plugin.
         static std::string configHome();
@@ -108,6 +122,10 @@ namespace OmarchyFX {
         bool                             m_configOk = false;
         std::vector<SPendingMove>        m_pendingMoves;
         SOverrides                       m_overrides;
+
+        // Hyprland reports the active window on every focus pass, including
+        // ones that land on the window that already had it.
+        PHLWINDOWREF                     m_lastActive;
 
         // A list, not a vector: find() and ensureEntry() hand out pointers into
         // it and entries are added while others are being walked.

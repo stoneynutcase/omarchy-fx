@@ -47,12 +47,23 @@ static constexpr const char* CFG_ELASTIC_FOLLOW   = "plugin:omarchy-fx:elastic_f
 static constexpr const char* CFG_ELASTIC_MAX     = "plugin:omarchy-fx:elastic_max_stretch";
 static constexpr const char* CFG_ELASTIC_TESS     = "plugin:omarchy-fx:elastic_tessellation";
 
+static constexpr const char* CFG_PULSE_ENABLED   = "plugin:omarchy-fx:pulse_enabled";
+static constexpr const char* CFG_PULSE_ON_SWITCH = "plugin:omarchy-fx:pulse_on_switch";
+static constexpr const char* CFG_PULSE_ON_CLICK  = "plugin:omarchy-fx:pulse_on_click";
+static constexpr const char* CFG_PULSE_ON_HOVER  = "plugin:omarchy-fx:pulse_on_hover";
+static constexpr const char* CFG_PULSE_STRENGTH  = "plugin:omarchy-fx:pulse_strength";
+static constexpr const char* CFG_PULSE_AMOUNT    = "plugin:omarchy-fx:pulse_amount";
+static constexpr const char* CFG_PULSE_PERIOD    = "plugin:omarchy-fx:pulse_period";
+static constexpr const char* CFG_PULSE_DAMPING   = "plugin:omarchy-fx:pulse_damping";
+static constexpr const char* CFG_PULSE_TESS      = "plugin:omarchy-fx:pulse_tessellation";
+
 // Both effects integrate in fixed substeps, so they look the same at 60 and
 // 240 Hz. The wobble's is KWin's 10 ms, kept for fidelity to the port; the
 // elastic spring is stiffer and wants a finer one. The frame cap keeps a stall
 // from firing hundreds of steps at once.
 static constexpr float WOBBLY_STEP_MS  = 10.F;
 static constexpr float ELASTIC_STEP_MS = 5.F;
+static constexpr float PULSE_STEP_MS   = 5.F;
 static constexpr float MAX_FRAME_MS    = 100.F;
 
 // How long a "this window was sent to another workspace" mark stays good. Long
@@ -105,6 +116,16 @@ void CEffectManager::registerConfig() {
     FLOAT(CFG_ELASTIC_FOLLOW, "override how much bulk lag is drawn, -1 to keep it", -1.F, -1.F, 1.F);
     FLOAT(CFG_ELASTIC_MAX, "override the stretch the spring stiffens past, in px, -1 to keep it", -1.F, -1.F, 1000.F);
     INT(CFG_ELASTIC_TESS, "elastic render mesh quads per axis", 20, 2, 64);
+
+    BOOL(CFG_PULSE_ENABLED, "swell a window once when it becomes the active one", true);
+    BOOL(CFG_PULSE_ON_SWITCH, "pulse when focus moves by keyboard, by a dispatcher, or on its own", true);
+    BOOL(CFG_PULSE_ON_CLICK, "pulse when a click gives a window focus", true);
+    BOOL(CFG_PULSE_ON_HOVER, "pulse when focus follows the mouse", false);
+    INT(CFG_PULSE_STRENGTH, "pulse preset, 0 (least) to 4 (most)", 2, 0, 4);
+    FLOAT(CFG_PULSE_AMOUNT, "override how far the edges swell, in px, -1 to keep the preset's", -1.F, -1.F, 200.F);
+    FLOAT(CFG_PULSE_PERIOD, "override the swell period in ms, -1 to keep it", -1.F, -1.F, 2000.F);
+    FLOAT(CFG_PULSE_DAMPING, "override the damping ratio, -1 to keep it", -1.F, -1.F, 4.F);
+    INT(CFG_PULSE_TESS, "pulse render mesh quads per axis", 20, 2, 64);
 
     // A notification, not a log line: Log::logger is an inline variable, so a
     // plugin links its own uninitialised copy of it and anything logged through
@@ -258,6 +279,24 @@ void CEffectManager::loadSettings() {
                 m_overrides.elasticFollow = std::stof(value);
             else if (key == "elastic_max_stretch")
                 m_overrides.elasticMaxStretch = std::stof(value);
+            else if (key == "pulse_enabled")
+                m_overrides.pulseEnabled = asBool(value);
+            else if (key == "pulse_on_switch")
+                m_overrides.pulseOnSwitch = asBool(value);
+            else if (key == "pulse_on_click")
+                m_overrides.pulseOnClick = asBool(value);
+            else if (key == "pulse_on_hover")
+                m_overrides.pulseOnHover = asBool(value);
+            else if (key == "pulse_strength")
+                m_overrides.pulseStrength = std::stoi(value);
+            else if (key == "pulse_tessellation")
+                m_overrides.pulseTessellation = std::stoi(value);
+            else if (key == "pulse_amount")
+                m_overrides.pulseAmount = std::stof(value);
+            else if (key == "pulse_period")
+                m_overrides.pulsePeriod = std::stof(value);
+            else if (key == "pulse_damping")
+                m_overrides.pulseDamping = std::stof(value);
         } catch (const std::exception& e) { Log::logger->log(Log::WARN, "[omarchy-fx] bad value for '{}' in settings: {}", key, value); }
     }
 }
@@ -284,6 +323,8 @@ void CEffectManager::init() {
     // The only trigger that cannot be seen by watching geometry: a carried
     // window's own rect does not move, the workspace under it does.
     m_listeners.emplace_back(Event::bus()->m_events.window.moveToWorkspace.listen([this](const PHLWINDOW& window, const PHLWORKSPACE& workspace) { noteWorkspaceMove(window); }));
+
+    m_listeners.emplace_back(Event::bus()->m_events.window.active.listen([this](const PHLWINDOW& window, Desktop::eFocusReason reason) { onFocus(window, reason); }));
 
     m_listeners.emplace_back(Event::bus()->m_events.input.mouse.button.listen([this]() { syncDrag(); }));
     m_listeners.emplace_back(Event::bus()->m_events.input.mouse.move.listen([this]() { syncDrag(); }));
@@ -361,6 +402,31 @@ SElasticParams CEffectManager::elasticParams() const {
     return params;
 }
 
+SPulseParams CEffectManager::pulseParams() const {
+    static auto PSTRENGTH = CConfigValue<Config::INTEGER>(CFG_PULSE_STRENGTH);
+    static auto PAMOUNT   = CConfigValue<Config::FLOAT>(CFG_PULSE_AMOUNT);
+    static auto PPERIOD   = CConfigValue<Config::FLOAT>(CFG_PULSE_PERIOD);
+    static auto PDAMPING  = CConfigValue<Config::FLOAT>(CFG_PULSE_DAMPING);
+    static auto PTESS     = CConfigValue<Config::INTEGER>(CFG_PULSE_TESS);
+
+    auto        params = pulsePreset(m_overrides.pulseStrength.value_or(sc<int>(*PSTRENGTH)));
+
+    const float AMOUNT  = m_overrides.pulseAmount.value_or(*PAMOUNT);
+    const float PERIOD  = m_overrides.pulsePeriod.value_or(*PPERIOD);
+    const float DAMPING = m_overrides.pulseDamping.value_or(*PDAMPING);
+
+    if (AMOUNT >= 0.F)
+        params.amount = AMOUNT;
+    if (PERIOD >= 0.F)
+        params.period = std::max(PERIOD, 1.F);
+    if (DAMPING >= 0.F)
+        params.damping = DAMPING;
+
+    params.tessellation = std::clamp(m_overrides.pulseTessellation.value_or(sc<int>(*PTESS)), 2, 64);
+
+    return params;
+}
+
 CEffectManager::SEntry* CEffectManager::find(const PHLWINDOW& window) {
     const auto IT = std::ranges::find_if(m_entries, [&window](const auto& e) { return e.window.lock() == window; });
     return IT == m_entries.end() ? nullptr : &*IT;
@@ -415,6 +481,7 @@ void CEffectManager::detach(SEntry& entry) {
     entry.transformer = nullptr;
     entry.wobblyOn    = false;
     entry.elasticOn   = false;
+    entry.pulseOn     = false;
     if (entry.state)
         entry.state->alive = false;
 }
@@ -441,6 +508,7 @@ void CEffectManager::beginWobble(const PHLWINDOW& window, const Vector2D& cursor
 
     // The drag owns the window now.
     entry->elasticOn = false;
+    entry->pulseOn   = false;
 }
 
 void CEffectManager::syncDrag() {
@@ -592,7 +660,7 @@ void CEffectManager::scanAnimations(const PHLMONITOR& monitor) {
             continue;
 
         // Something is already deforming this window; let it finish.
-        if (auto* existing = find(WINDOW); existing && (existing->wobblyOn || existing->elasticOn))
+        if (auto* existing = find(WINDOW); existing && (existing->wobblyOn || existing->elasticOn || existing->pulseOn))
             continue;
 
         auto* entry = ensureEntry(WINDOW);
@@ -606,6 +674,68 @@ void CEffectManager::scanAnimations(const PHLMONITOR& monitor) {
         if (CARRIED)
             clearWorkspaceMove(WINDOW);
     }
+}
+
+void CEffectManager::onFocus(const PHLWINDOW& window, Desktop::eFocusReason reason) {
+    if (!m_configOk || !window)
+        return;
+
+    // Track this before any of the gates below, so that turning the effect on
+    // later does not pulse the window that has had focus all along.
+    const bool SAME = m_lastActive.lock() == window;
+    m_lastActive    = window;
+    if (SAME)
+        return;
+
+    static auto PENABLED = CConfigValue<Config::BOOL>(CFG_PULSE_ENABLED);
+    static auto PSWITCH  = CConfigValue<Config::BOOL>(CFG_PULSE_ON_SWITCH);
+    static auto PCLICK   = CConfigValue<Config::BOOL>(CFG_PULSE_ON_CLICK);
+    static auto PHOVER   = CConfigValue<Config::BOOL>(CFG_PULSE_ON_HOVER);
+
+    if (!shellAllows() || !m_overrides.pulseEnabled.value_or(*PENABLED))
+        return;
+
+    // Three doors, by what moved the focus. Hover is off by default because
+    // with focus following the mouse every tile you cross would swell, and a
+    // cue for "where did focus go" is pointless when the pointer is on it.
+    bool wanted = false;
+    switch (reason) {
+        case Desktop::FOCUS_REASON_FFM: wanted = m_overrides.pulseOnHover.value_or(*PHOVER); break;
+        case Desktop::FOCUS_REASON_CLICK: wanted = m_overrides.pulseOnClick.value_or(*PCLICK); break;
+        default: wanted = m_overrides.pulseOnSwitch.value_or(*PSWITCH); break;
+    }
+    if (!wanted)
+        return;
+
+    // A window that is still opening has Hyprland's own animation on it.
+    if (!window->m_isMapped || window->isHidden() || window->m_animatingIn)
+        return;
+
+    // One that fills its monitor has nowhere to swell to. Judged by size rather
+    // than by fullscreen state, which also catches a maximised window with the
+    // gaps turned off.
+    if (const auto MON = window->m_monitor.lock()) {
+        const auto FRAME = window->getWindowMainSurfaceBox();
+        if (FRAME.w >= MON->m_size.x - 1 && FRAME.h >= MON->m_size.y - 1)
+            return;
+    }
+
+    // Let a drag or a stretch already on this window finish; a pulse still
+    // ringing is simply restarted.
+    if (auto* existing = find(window); existing && (existing->wobblyOn || existing->elasticOn))
+        return;
+
+    const auto FRAME = window->getWindowMainSurfaceBox().copy().translate(renderOffsetOf(window));
+    if (FRAME.w <= 1 || FRAME.h <= 1)
+        return;
+
+    auto* entry = ensureEntry(window);
+    if (!entry)
+        return;
+
+    entry->pulseParams = pulseParams();
+    entry->pulse.arm(FRAME, entry->pulseParams);
+    entry->pulseOn = true;
 }
 
 void CEffectManager::tick(const PHLMONITOR& monitor) {
@@ -678,9 +808,23 @@ void CEffectManager::tick(const PHLMONITOR& monitor) {
                 state.tessellation = entry.elasticParams.tessellation;
                 deformed           = entry.elastic.controlBounds(entry.elasticParams);
             }
+        } else if (entry.pulseOn) {
+            for (float left = elapsed; left > 0.F;) {
+                const float DT = std::min(left, PULSE_STEP_MS);
+                left -= DT;
+                entry.pulse.step(DT, entry.pulseParams, FRAME);
+            }
+
+            if (entry.pulse.settled())
+                entry.pulseOn = false;
+            else {
+                state.offsets      = entry.pulse.offsets(entry.pulseParams);
+                state.tessellation = entry.pulseParams.tessellation;
+                deformed           = entry.pulse.controlBounds(entry.pulseParams);
+            }
         }
 
-        const bool DONE = !entry.wobblyOn && !entry.elasticOn;
+        const bool DONE = !entry.wobblyOn && !entry.elasticOn && !entry.pulseOn;
         if (DONE)
             state.offsets = {};
 

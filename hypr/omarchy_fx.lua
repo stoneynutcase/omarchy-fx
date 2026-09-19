@@ -73,6 +73,26 @@ if not missing then
                 elastic_tilt         = -1,
                 elastic_follow       = -1,
                 elastic_max_stretch  = -1,
+
+                -- Focus pulse: the window that just became active swells out
+                -- a few pixels and settles back, so your eye finds it.
+                pulse_enabled   = true,
+                pulse_on_switch = true,  -- keyboard, a dispatcher, or focus moving on its own
+                pulse_on_click  = true,  -- a click that gives a window focus
+                pulse_on_hover  = false, -- focus following the mouse; noisy with follow_mouse
+
+                -- Strength: 0 = subtle, 4 = bouncy.
+                pulse_strength = 2,
+
+                pulse_tessellation = 20,
+
+                -- Per-parameter overrides of the preset, -1 keeps the preset's.
+                --   amount   how far the edges swell at the peak, in px
+                --   period   swell period in ms; how fast it settles
+                --   damping  damping ratio; 1 is critical, lower rings more
+                pulse_amount  = -1,
+                pulse_period  = -1,
+                pulse_damping = -1,
             },
         },
     })
