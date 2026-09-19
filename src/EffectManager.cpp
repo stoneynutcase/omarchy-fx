@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
+#include <string_view>
 
 using namespace OmarchyFX;
 
@@ -57,6 +59,14 @@ static constexpr float MAX_FRAME_MS    = 100.F;
 // enough to cover the gap between the event and the workspace becoming
 // visible, short enough that a silent move never surfaces later.
 static constexpr auto PENDING_MOVE_TTL = std::chrono::milliseconds(600);
+
+// How often the shell's bar layout is stat'ed for the widget. Cheap, but the
+// check sits on the mouse-move path, so not every event.
+static constexpr auto SHELL_CHECK_EVERY = std::chrono::milliseconds(500);
+
+// The shell plugin id, which is also its directory under plugins/ and its
+// "id" in the bar layout. Must match shell/manifest.json.
+static constexpr std::string_view SHELL_WIDGET_ID = "omarchy-fx";
 
 void CEffectManager::registerConfig() {
     using namespace Config::Values;
@@ -104,13 +114,74 @@ void CEffectManager::registerConfig() {
         HyprlandAPI::addNotification(PHANDLE, "[omarchy-fx] Could not register its config options; effects are inert.", CHyprColor{1.0, 0.2, 0.2, 1.0}, 6000);
 }
 
-std::string CEffectManager::settingsPath() {
+std::string CEffectManager::configHome() {
     const auto XDG = getenv("XDG_CONFIG_HOME");
     if (XDG && *XDG)
-        return std::string{XDG} + "/omarchy/omarchy-fx.conf";
+        return XDG;
 
     const auto HOME = getenv("HOME");
-    return std::string{HOME ? HOME : ""} + "/.config/omarchy/omarchy-fx.conf";
+    return std::string{HOME ? HOME : ""} + "/.config";
+}
+
+std::string CEffectManager::settingsPath() {
+    return configHome() + "/omarchy/omarchy-fx.conf";
+}
+
+// Is this widget placed on the bar in the shell's layout file? A substring
+// match on `"id": "<id>"`, not a JSON parse: the file is small, the shape is
+// Omarchy's own, and pulling in a JSON library for one key is not worth it.
+static bool barHasWidget(const std::string& layoutPath, std::string_view id) {
+    std::ifstream file(layoutPath);
+    if (!file.good())
+        return false;
+
+    const std::string TEXT((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::string NEEDLE = "\"" + std::string{id} + "\"";
+
+    for (auto pos = TEXT.find(NEEDLE); pos != std::string::npos; pos = TEXT.find(NEEDLE, pos + NEEDLE.size())) {
+        // Walk back over the separator and expect the "id" key in front of it.
+        auto i = pos;
+        while (i > 0 && (TEXT[i - 1] == ':' || TEXT[i - 1] == ' ' || TEXT[i - 1] == '\t' || TEXT[i - 1] == '\n' || TEXT[i - 1] == '\r'))
+            --i;
+        if (i >= 4 && TEXT.compare(i - 4, 4, "\"id\"") == 0)
+            return true;
+    }
+
+    return false;
+}
+
+bool CEffectManager::shellAllows() {
+    const auto NOW = std::chrono::steady_clock::now();
+    if (m_shellEvaluated && NOW - m_shellCheckedAt < SHELL_CHECK_EVERY)
+        return m_shellAllows;
+    m_shellCheckedAt = NOW;
+
+    // No Omarchy shell, no widget to be the switch: the config decides.
+    const auto OMARCHY = getenv("OMARCHY_PATH");
+    if (!std::filesystem::is_directory(std::string{OMARCHY && *OMARCHY ? OMARCHY : "/usr/share/omarchy"} + "/shell")) {
+        m_shellEvaluated = true;
+        m_shellAllows    = true;
+        return true;
+    }
+
+    const auto      LAYOUT = configHome() + "/omarchy/shell.json";
+    const auto      WIDGET = configHome() + "/omarchy/plugins/" + std::string{SHELL_WIDGET_ID};
+
+    std::error_code ec;
+    const auto      STAMP     = std::filesystem::last_write_time(LAYOUT, ec); // min() when the file is missing
+    const bool      INSTALLED = std::filesystem::is_directory(WIDGET);
+
+    if (m_shellEvaluated && STAMP == m_shellLayoutStamp && INSTALLED == m_shellWidgetInstalled)
+        return m_shellAllows;
+
+    m_shellEvaluated       = true;
+    m_shellLayoutStamp     = STAMP;
+    m_shellWidgetInstalled = INSTALLED;
+
+    // Disabling a shell plugin drops its entry from the bar layout, and
+    // removing it also takes the directory. Either one means "off".
+    m_shellAllows = INSTALLED && barHasWidget(LAYOUT, SHELL_WIDGET_ID);
+    return m_shellAllows;
 }
 
 void CEffectManager::loadSettings() {
@@ -197,7 +268,10 @@ void CEffectManager::init() {
     // The settings file is written by the shell plugin's panel, which follows
     // the write with `hyprctl reload`. Picking the file back up here is what
     // makes the panel's changes take effect.
-    m_listeners.emplace_back(Event::bus()->m_events.config.reloaded.listen([this]() { loadSettings(); }));
+    m_listeners.emplace_back(Event::bus()->m_events.config.reloaded.listen([this]() {
+        loadSettings();
+        m_shellEvaluated = false; // re-stat the bar layout on the next trigger
+    }));
 
     m_listeners.emplace_back(Event::bus()->m_events.render.preChecks.listen([this](const PHLMONITOR& monitor) {
         syncDrag();
@@ -377,7 +451,7 @@ void CEffectManager::syncDrag() {
     static auto PONMOVE   = CConfigValue<Config::BOOL>(CFG_WOBBLY_ON_MOVE);
     static auto PONRESIZE = CConfigValue<Config::BOOL>(CFG_WOBBLY_ON_RESIZE);
 
-    const bool  ENABLED   = m_overrides.wobblyEnabled.value_or(*PENABLED);
+    const bool  ENABLED   = shellAllows() && m_overrides.wobblyEnabled.value_or(*PENABLED);
     const bool  ON_MOVE   = m_overrides.wobblyOnMove.value_or(*PONMOVE);
     const bool  ON_RESIZE = m_overrides.wobblyOnResize.value_or(*PONRESIZE);
 
@@ -486,7 +560,7 @@ void CEffectManager::scanAnimations(const PHLMONITOR& monitor) {
     static auto PFLOATING  = CConfigValue<Config::BOOL>(CFG_ELASTIC_FLOATING);
     static auto PWORKSPACE = CConfigValue<Config::BOOL>(CFG_ELASTIC_WORKSPACE);
 
-    const bool  ENABLED   = m_overrides.elasticEnabled.value_or(*PENABLED);
+    const bool  ENABLED   = shellAllows() && m_overrides.elasticEnabled.value_or(*PENABLED);
     const bool  TILED     = m_overrides.elasticOnTiled.value_or(*PTILED);
     const bool  FLOATING  = m_overrides.elasticOnFloating.value_or(*PFLOATING);
     const bool  WORKSPACE = m_overrides.elasticOnWorkspace.value_or(*PWORKSPACE);

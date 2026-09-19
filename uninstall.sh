@@ -15,6 +15,17 @@ OMARCHY_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy"
 HOOK="/etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook"
 RUNNER="/usr/local/bin/omarchy-fx-rebuild"
 
+# Root, for the two hook paths. sudo can only ask for a password on a terminal;
+# run from a launcher, a GUI or an agent there is none, and polkit's graphical
+# agent (which Omarchy always runs) is what can still ask.
+as_root() {
+  if [[ -t 0 ]] || ! command -v pkexec >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    pkexec "$@"
+  fi
+}
+
 hyprctl plugin unload "$PLUGIN_DIR/omarchy-fx.so" >/dev/null 2>&1 || true
 
 # Disable before deleting, so the widget also leaves the bar layout in
@@ -30,8 +41,8 @@ rm -f "$PLUGIN_DIR/omarchy-fx.so" "$PLUGIN_DIR/omarchy-fx.so.stale" "$HYPR_DIR/o
 # Left behind, the hook would rebuild a plugin nothing loads any more — and
 # would fail the rebuild loudly on every Hyprland update once the checkout goes.
 if [[ -e "$HOOK" || -e "$RUNNER" ]]; then
-  echo ":: removing the pacman rebuild hook (needs sudo)"
-  sudo rm -f "$HOOK" "$RUNNER" ||
+  echo ":: removing the pacman rebuild hook (needs root)"
+  as_root rm -f "$HOOK" "$RUNNER" ||
     echo "warning: could not remove $HOOK / $RUNNER; delete them by hand." >&2
 fi
 

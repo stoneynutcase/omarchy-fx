@@ -24,6 +24,17 @@ OLD_SHELL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$OLD_SHELL_ID"
 HOOK="/etc/pacman.d/hooks/95-omarchy-fx-rebuild.hook"
 RUNNER="/usr/local/bin/omarchy-fx-rebuild"
 
+# Root, for the two hook paths. sudo can only ask for a password on a terminal;
+# run from a launcher, a GUI or an agent there is none, and polkit's graphical
+# agent (which Omarchy always runs) is what can still ask.
+as_root() {
+  if [[ -t 0 ]] || ! command -v pkexec >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    pkexec "$@"
+  fi
+}
+
 # --plugin-only rebuilds and reinstalls just the .so. It is what the pacman hook
 # runs after a Hyprland update, when the config and the bar widget are already
 # in place and only the binary has gone stale.
@@ -123,12 +134,12 @@ fi
 # A stale plugin is not a cosmetic problem: the ABI check faults inside
 # pluginInit, and the Hyprland config loads plugins during compositor startup,
 # so an un-rebuilt .so can cost you the next login. The hook removes the need to
-# remember. Root-owned paths, hence sudo — pass --no-hook to skip it.
+# remember. Root-owned paths, hence as_root — pass --no-hook to skip it.
 if (( WANT_HOOK )); then
   if ! command -v pacman >/dev/null 2>&1; then
     echo ":: not a pacman system, skipping the rebuild hook"
   else
-    echo ":: installing the rebuild hook (needs sudo)"
+    echo ":: installing the rebuild hook (needs root)"
     TMP_RUNNER="$(mktemp)"
     sed -e "s|@REPO@|$REPO|g" \
         -e "s|@USER@|$(id -un)|g" \
@@ -136,13 +147,15 @@ if (( WANT_HOOK )); then
         -e "s|@PLUGIN_SO@|$PLUGIN_SO|g" \
         "$REPO/pacman/omarchy-fx-rebuild.in" >"$TMP_RUNNER"
 
-    if sudo install -Dm 0755 "$TMP_RUNNER" "$RUNNER" &&
-       sudo install -Dm 0644 "$REPO/pacman/95-omarchy-fx-rebuild.hook" "$HOOK"; then
+    # One root call for both files: pkexec asks for the password on every
+    # invocation, so two calls would mean two dialogs.
+    if as_root sh -c 'install -Dm 0755 "$1" "$2" && install -Dm 0644 "$3" "$4"' _ \
+         "$TMP_RUNNER" "$RUNNER" "$REPO/pacman/95-omarchy-fx-rebuild.hook" "$HOOK"; then
       echo "   $HOOK"
       echo "   $RUNNER"
     else
       echo "warning: could not install the rebuild hook." >&2
-      echo "         Re-run ./install.sh when sudo is available, or pass" >&2
+      echo "         Re-run ./install.sh when root is available, or pass" >&2
       echo "         --no-hook to stop being asked. Without it, remember to" >&2
       echo "         re-run ./install.sh after every Hyprland update." >&2
     fi

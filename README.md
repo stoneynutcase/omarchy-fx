@@ -79,12 +79,39 @@ Hyprland asks for permission the first time a plugin is loaded. The installed
 config also declares `hl.permission({ ..., type = "plugin", mode = "allow" })`
 so later launches don't prompt.
 
-Remove it with `./uninstall.sh`.
+## Turning it off, and removing it
+
+On an Omarchy shell, **the bar widget is the switch**. Middle-click it to turn
+every effect off and on; the panel behind it turns each effect off separately.
+Taking the widget off the bar also stops the effects:
+
+```bash
+omarchy plugin disable omarchy-fx    # or: omarchy plugin remove omarchy-fx
+```
+
+Omarchy has no way for a shell plugin to tell the compositor anything when it
+is disabled, so the compositor plugin watches the shell's bar layout instead:
+with the shell installed and `omarchy-fx` not on the bar, nothing deforms. That
+takes effect within half a second, needs no reload, and holds across reboots.
+Without an Omarchy shell the Hyprland config alone decides.
+
+Either way the Hyprland plugin is still installed and still loads at startup —
+inert, but there. The only thing that removes the `.so`, the config snippet,
+the settings file and the pacman rebuild hook is:
+
+```bash
+./uninstall.sh
+```
+
+It unloads the plugin from the running compositor first, so no reboot is
+needed for that either.
 
 ## Staying in step with Hyprland
 
-`install.sh` installs a pacman hook, which needs `sudo` for two root-owned
-paths:
+`install.sh` installs a pacman hook, which needs root for two root-owned paths.
+On a terminal that is a `sudo` prompt; run without one (from a launcher, a GUI,
+an agent) it falls back to `pkexec`, so the password dialog comes from Omarchy's
+polkit agent instead. `uninstall.sh` does the same to remove them.
 
 | | |
 | --- | --- |

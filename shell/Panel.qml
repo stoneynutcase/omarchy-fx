@@ -404,6 +404,42 @@ Panel {
     }
   }
 
+  // A trigger chip: one of several independent switches shown as a row of
+  // bordered buttons, lit when on. Multi-select, so not a ButtonGroup.
+  component OptionChip: Button {
+    id: chip
+    property bool live: true
+    property bool on: false
+    bordered: true
+    selected: chip.on
+    enabled: chip.live
+    opacity: chip.live ? 1 : 0.5
+    foreground: root.fg
+    background: Color.popups.background
+    fontFamily: root.fontFam
+    fontSize: Style.font.bodySmall
+  }
+
+  // Muted one-liner under a control.
+  component Hint: Text {
+    width: parent ? parent.width : 0
+    wrapMode: Text.WordWrap
+    textFormat: Text.PlainText
+    color: Qt.darker(root.fg, 1.5)
+    font.family: root.fontFam
+    font.pixelSize: Style.font.caption
+  }
+
+  // Which tab is showing. Not persisted: the panel opens on the wobble, the
+  // effect people come for, and the other two are a click away.
+  property string tab: "wobbly"
+  // Glyphs are Nerd Font: nf-md-waves, nf-fa-arrows_h, nf-md-grid.
+  readonly property var tabs: [
+    { value: "wobbly",  label: "Wobbly",  icon: "󰞍" },
+    { value: "elastic", label: "Elastic", icon: "" },
+    { value: "mesh",    label: "Mesh",    icon: "󰋁" }
+  ]
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -448,188 +484,194 @@ Panel {
             : "The omarchy-fx Hyprland plugin is not loaded, so nothing will deform. Load it with:\nhyprctl plugin load ~/.local/share/hyprland/plugins/omarchy-fx.so"
         }
 
+        // ---- tabs -----------------------------------------------------------
+
+        ButtonGroup {
+          options: root.tabs
+          value: root.tab
+          focusable: false
+          foreground: root.fg
+          background: Color.popups.background
+          fontFamily: root.fontFam
+          fontSize: Style.font.bodySmall
+          onChanged: function(v) { root.tab = v }
+        }
+
         PanelSeparator { foreground: root.fg }
 
         // ---- wobble ---------------------------------------------------------
 
-        Toggle {
+        Column {
           width: parent.width
-          enabled: root.pluginLoaded
-          opacity: root.pluginLoaded ? 1 : 0.5
-          label: "Wobbly windows"
-          description: "Wobble a window while the pointer drags it"
-          checked: root.wobblyEnabled
-          foreground: root.fg
-          fontFamily: root.fontFam
-          onClicked: {
-            root.wobblyEnabled = !root.wobblyEnabled
-            root.persist()
+          spacing: Style.space(10)
+          visible: root.tab === "wobbly"
+
+          Toggle {
+            width: parent.width
+            enabled: root.pluginLoaded
+            opacity: root.pluginLoaded ? 1 : 0.5
+            label: "Wobbly windows"
+            description: "Wobble a window while the pointer drags it"
+            checked: root.wobblyEnabled
+            foreground: root.fg
+            fontFamily: root.fontFam
+            onClicked: {
+              root.wobblyEnabled = !root.wobblyEnabled
+              root.persist()
+            }
+          }
+
+          PanelSectionHeader {
+            width: parent.width
+            text: "Wobble on"
+            foreground: root.fg
+            fontFamily: root.fontFam
+          }
+
+          Flow {
+            width: parent.width
+            spacing: Style.spacing.md
+
+            OptionChip {
+              text: "Move"
+              tooltipText: "SUPER + left mouse drag"
+              live: root.pluginLoaded && root.wobblyEnabled
+              on: root.onMove
+              onClicked: { root.onMove = !root.onMove; root.persist() }
+            }
+
+            OptionChip {
+              text: "Resize"
+              tooltipText: "SUPER + right mouse drag"
+              live: root.pluginLoaded && root.wobblyEnabled
+              on: root.onResize
+              onClicked: { root.onResize = !root.onResize; root.persist() }
+            }
+          }
+
+          EffectSlider {
+            hostBar: root.bar
+            caption: "Wobbliness"
+            valueText: root.wobblinessNames[root.clamp5(root.wobbliness)]
+            live: root.pluginLoaded && root.wobblyEnabled
+            value: root.wobbliness
+            onPicked: function(v) { root.wobbliness = v; root.persistSoon() }
+            onCommitted: function(v) { root.wobbliness = v; root.persist() }
+          }
+
+          Hint {
+            visible: root.pluginLoaded && !root.configError
+            text: "stiffness " + root.stiffness.toFixed(2)
+              + " · drag " + root.drag.toFixed(2)
+              + " · move factor " + root.moveFactor.toFixed(2)
           }
         }
-
-        Toggle {
-          width: parent.width
-          enabled: root.pluginLoaded && root.wobblyEnabled
-          opacity: (root.pluginLoaded && root.wobblyEnabled) ? 1 : 0.5
-          label: "On move"
-          description: "SUPER + left mouse drag"
-          checked: root.onMove
-          foreground: root.fg
-          fontFamily: root.fontFam
-          onClicked: {
-            root.onMove = !root.onMove
-            root.persist()
-          }
-        }
-
-        Toggle {
-          width: parent.width
-          enabled: root.pluginLoaded && root.wobblyEnabled
-          opacity: (root.pluginLoaded && root.wobblyEnabled) ? 1 : 0.5
-          label: "On resize"
-          description: "SUPER + right mouse drag"
-          checked: root.onResize
-          foreground: root.fg
-          fontFamily: root.fontFam
-          onClicked: {
-            root.onResize = !root.onResize
-            root.persist()
-          }
-        }
-
-        EffectSlider {
-          hostBar: root.bar
-          caption: "Wobbliness"
-          valueText: root.wobblinessNames[root.clamp5(root.wobbliness)]
-          live: root.pluginLoaded && root.wobblyEnabled
-          value: root.wobbliness
-          onPicked: function(v) { root.wobbliness = v; root.persistSoon() }
-          onCommitted: function(v) { root.wobbliness = v; root.persist() }
-        }
-
-        Text {
-          width: parent.width
-          visible: root.pluginLoaded && !root.configError
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          color: Qt.darker(root.fg, 1.5)
-          font.family: root.fontFam
-          font.pixelSize: Style.font.caption
-          text: "stiffness " + root.stiffness.toFixed(2)
-            + " · drag " + root.drag.toFixed(2)
-            + " · move factor " + root.moveFactor.toFixed(2)
-        }
-
-        PanelSeparator { foreground: root.fg }
 
         // ---- elasticity -----------------------------------------------------
 
-        Toggle {
+        Column {
           width: parent.width
-          enabled: root.pluginLoaded
-          opacity: root.pluginLoaded ? 1 : 0.5
-          label: "Elastic moves"
-          description: "Stretch a window when the layout moves it"
-          checked: root.elasticEnabled
-          foreground: root.fg
-          fontFamily: root.fontFam
-          onClicked: {
-            root.elasticEnabled = !root.elasticEnabled
-            root.persist()
+          spacing: Style.space(10)
+          visible: root.tab === "elastic"
+
+          Toggle {
+            width: parent.width
+            enabled: root.pluginLoaded
+            opacity: root.pluginLoaded ? 1 : 0.5
+            label: "Elastic moves"
+            description: "Stretch a window when the layout moves it"
+            checked: root.elasticEnabled
+            foreground: root.fg
+            fontFamily: root.fontFam
+            onClicked: {
+              root.elasticEnabled = !root.elasticEnabled
+              root.persist()
+            }
+          }
+
+          PanelSectionHeader {
+            width: parent.width
+            text: "Stretch on"
+            foreground: root.fg
+            fontFamily: root.fontFam
+          }
+
+          Flow {
+            width: parent.width
+            spacing: Style.spacing.md
+
+            OptionChip {
+              text: "Tiled"
+              tooltipText: "Swapping, and any reflow of the layout"
+              live: root.pluginLoaded && root.elasticEnabled
+              on: root.onTiled
+              onClicked: { root.onTiled = !root.onTiled; root.persist() }
+            }
+
+            OptionChip {
+              text: "Floating"
+              tooltipText: "Animated moves and resizes of floating windows"
+              live: root.pluginLoaded && root.elasticEnabled
+              on: root.onFloating
+              onClicked: { root.onFloating = !root.onFloating; root.persist() }
+            }
+
+            OptionChip {
+              text: "Workspace"
+              tooltipText: "Carrying a window to another workspace"
+              live: root.pluginLoaded && root.elasticEnabled
+              on: root.onWorkspace
+              onClicked: { root.onWorkspace = !root.onWorkspace; root.persist() }
+            }
+          }
+
+          Hint {
+            visible: root.onWorkspace && root.elasticEnabled
+            text: "Workspace needs Hyprland's workspace animation, which Omarchy ships off. Turn it on in ~/.config/hypr/looknfeel.lua."
+          }
+
+          EffectSlider {
+            hostBar: root.bar
+            caption: "Stretchiness"
+            valueText: root.stretchinessNames[root.clamp5(root.stretchiness)]
+            live: root.pluginLoaded && root.elasticEnabled
+            value: root.stretchiness
+            onPicked: function(v) { root.stretchiness = v; root.persistSoon() }
+            onCommitted: function(v) { root.stretchiness = v; root.persist() }
+          }
+
+          Hint {
+            visible: root.pluginLoaded && !root.configError
+            text: "period " + Math.round(root.period) + " ms"
+              + " · damping " + root.damping.toFixed(2)
+              + " · max stretch " + Math.round(root.maxStretch) + " px"
           }
         }
-
-        Toggle {
-          width: parent.width
-          enabled: root.pluginLoaded && root.elasticEnabled
-          opacity: (root.pluginLoaded && root.elasticEnabled) ? 1 : 0.5
-          label: "Tiled windows"
-          description: "Swapping, and any reflow of the layout"
-          checked: root.onTiled
-          foreground: root.fg
-          fontFamily: root.fontFam
-          onClicked: {
-            root.onTiled = !root.onTiled
-            root.persist()
-          }
-        }
-
-        Toggle {
-          width: parent.width
-          enabled: root.pluginLoaded && root.elasticEnabled
-          opacity: (root.pluginLoaded && root.elasticEnabled) ? 1 : 0.5
-          label: "Floating windows"
-          description: "Animated moves and resizes of floating windows"
-          checked: root.onFloating
-          foreground: root.fg
-          fontFamily: root.fontFam
-          onClicked: {
-            root.onFloating = !root.onFloating
-            root.persist()
-          }
-        }
-
-        Toggle {
-          width: parent.width
-          enabled: root.pluginLoaded && root.elasticEnabled
-          opacity: (root.pluginLoaded && root.elasticEnabled) ? 1 : 0.5
-          label: "Workspace moves"
-          description: "Carrying a window to another workspace. Needs Hyprland's workspace animation, which Omarchy ships off"
-          checked: root.onWorkspace
-          foreground: root.fg
-          fontFamily: root.fontFam
-          onClicked: {
-            root.onWorkspace = !root.onWorkspace
-            root.persist()
-          }
-        }
-
-        EffectSlider {
-          hostBar: root.bar
-          caption: "Stretchiness"
-          valueText: root.stretchinessNames[root.clamp5(root.stretchiness)]
-          live: root.pluginLoaded && root.elasticEnabled
-          value: root.stretchiness
-          onPicked: function(v) { root.stretchiness = v; root.persistSoon() }
-          onCommitted: function(v) { root.stretchiness = v; root.persist() }
-        }
-
-        Text {
-          width: parent.width
-          visible: root.pluginLoaded && !root.configError
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          color: Qt.darker(root.fg, 1.5)
-          font.family: root.fontFam
-          font.pixelSize: Style.font.caption
-          text: "period " + Math.round(root.period) + " ms"
-            + " · damping " + root.damping.toFixed(2)
-            + " · max stretch " + Math.round(root.maxStretch) + " px"
-        }
-
-        PanelSeparator { foreground: root.fg }
 
         // ---- shared rendering -----------------------------------------------
 
-        PanelSectionHeader {
+        Column {
           width: parent.width
-          text: "Mesh resolution"
-          foreground: root.fg
-          fontFamily: root.fontFam
-        }
+          spacing: Style.space(10)
+          visible: root.tab === "mesh"
 
-        EffectSlider {
-          hostBar: root.bar
-          caption: "Quads per axis, for every effect"
-          valueText: String(root.tessellation)
-          live: root.pluginLoaded && root.enabled
-          minimum: 4
-          maximum: 40
-          step: 2
-          ticks: 0
-          value: root.tessellation
-          onPicked: function(v) { root.tessellation = v; root.persistSoon() }
-          onCommitted: function(v) { root.tessellation = v; root.persist() }
+          EffectSlider {
+            hostBar: root.bar
+            caption: "Quads per axis"
+            valueText: String(root.tessellation)
+            live: root.pluginLoaded && root.enabled
+            minimum: 4
+            maximum: 40
+            step: 2
+            ticks: 0
+            value: root.tessellation
+            onPicked: function(v) { root.tessellation = v; root.persistSoon() }
+            onCommitted: function(v) { root.tessellation = v; root.persist() }
+          }
+
+          Hint {
+            text: "One mesh resolution for every effect. Higher is smoother and costs more per frame; 20 is what KWin uses."
+          }
         }
       }
     }

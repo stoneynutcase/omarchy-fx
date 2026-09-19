@@ -8,6 +8,7 @@
 #include <hyprland/src/helpers/signal/Signal.hpp>
 
 #include <chrono>
+#include <filesystem>
 #include <list>
 #include <optional>
 #include <string>
@@ -83,8 +84,21 @@ namespace OmarchyFX {
         SElasticParams elasticParams() const;
 
         // Settings file, shared with the shell plugin.
+        static std::string configHome();
         static std::string settingsPath();
         void               loadSettings();
+
+        // On an Omarchy shell the bar widget is the switch: `omarchy plugin
+        // disable` or `remove` takes it off the bar, and that alone must stop
+        // the effects — nothing in the shell can reach the compositor to say so.
+        // So the compositor watches the shell's bar layout instead. Without an
+        // Omarchy shell this is always true and the config stays in charge.
+        bool                                  shellAllows();
+        std::chrono::steady_clock::time_point m_shellCheckedAt{};
+        std::filesystem::file_time_type       m_shellLayoutStamp{};
+        bool                                  m_shellWidgetInstalled = false;
+        bool                                  m_shellEvaluated       = false;
+        bool                                  m_shellAllows          = true;
 
         struct SPendingMove {
             PHLWINDOWREF                          window;
