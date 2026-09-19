@@ -396,8 +396,13 @@ void CShakeCursor::tick() {
     // Something else set a new cursor image while we were showing ours (the
     // pointer crossed into a text field, say). Take that as the new original
     // and magnify it instead.
+    // Hyprland also re-sets its default cursor on every motion event while
+    // the pointer is over no window at all, i.e. in the gap between two.
+    // Either way what is showing is not ours any more, so the next apply must
+    // set the buffer again even if zoom and buffer are what they were.
     if (m_active && Pointer::mgr()->currentCursorImage().pBuffer != m_bigBuffer) {
-        m_active = false;
+        m_active        = false;
+        m_appliedBuffer = nullptr;
         captureOriginal();
     }
 
