@@ -31,7 +31,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     Log::logger->log(Log::INFO, "[omarchy-fx] loaded, window effects armed");
 
-    return {"omarchy-fx", "Window effects for Omarchy: wobbly dragging, elastic tiling moves and a focus pulse", "omarchy-fx", "0.3.0"};
+    return {"omarchy-fx", "Window effects for Omarchy: wobbly dragging, elastic tiling moves, a focus pulse, and shake-to-find for the cursor", "omarchy-fx", "0.4.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

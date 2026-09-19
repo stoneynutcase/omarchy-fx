@@ -86,6 +86,10 @@ if not missing then
 
                 pulse_tessellation = 20,
 
+                -- Extras. Shake the pointer and the cursor grows until you
+                -- stop, so you can find it — KDE Plasma's "Shake Cursor".
+                shake_enabled = true,
+
                 -- Per-parameter overrides of the preset, -1 keeps the preset's.
                 --   amount   how far the edges swell at the peak, in px
                 --   period   swell period in ms; how fast it settles

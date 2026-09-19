@@ -17,6 +17,9 @@ plugin. Three of them so far, all built on the same deformable mesh:
   for keyboard and click focus changes, off for focus that merely follows the
   mouse.
 
+And one extra that is not a window effect: **shake to find the cursor** —
+shake the pointer and it grows until you stop, as in KDE Plasma.
+
 ## Why the effects are a Hyprland plugin, not an Omarchy shell plugin
 
 Omarchy shell plugins (`~/.config/omarchy/plugins/`) are Quickshell/QML and draw
@@ -226,6 +229,32 @@ The file guards the `hl.config` call with `hl.get_config`, because plugin
 options don't exist during the config pass that loads the plugin. Hyprland
 reloads the config immediately afterwards, and that pass applies them.
 
+### Extras
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `shake_enabled` | `true` | Shake the pointer and the cursor grows until you stop, so you can find it. KDE Plasma's "Shake Cursor" |
+
+A port of KWin's `shakecursor`, numbers and all. The detector keeps the last
+second of motion as a list of reversals and scores the trail's length against
+the diagonal of the box it fits in; a sweep scores about one, a shake well
+above four. The first shake takes the cursor to three times its size, every
+further one adds another size on top with no ceiling, each step tweened over
+200 ms, and it comes back two seconds after you stop. Motion with a button
+held, or during a window drag, is never a shake. None of that is tunable.
+
+While magnified the cursor is drawn in software, since a hardware cursor
+plane has a size cap. How sharp it stays depends on the theme. With a
+[hyprcursor](https://github.com/hyprwm/hyprcursor) theme, which is SVG, the
+current shape is re-rendered at the exact magnified size, as KWin does with
+Plasma's SVG cursors, and it is sharp at any size. With a plain Xcursor theme
+the largest raster it ships is scaled, and the growth stops a little past
+that size rather than balloon into a blur: Omarchy's default, Adwaita, stops
+at 96 px, so about three times a 24 px cursor. To get the unbounded, sharp
+version, install an SVG hyprcursor theme (`rose-pine-hyprcursor` is one) and
+name it in `~/.config/hypr/envs.lua` with
+`hl.env("HYPRCURSOR_THEME", "<name>")`.
+
 ## How it works
 
 Both effects deform the same thing: a **4×4 lattice of control points** laid
@@ -342,6 +371,8 @@ window's rectangle and what keeps frames scheduled while a simulation runs.
 src/Mesh.hpp             the 4x4 control lattice every effect deforms
 src/WobblyModel.*        KWin's wobble physics, no rendering, no Hyprland state
 src/ElasticModel.*       the inertial rubber-band physics, same
+src/PulseModel.*         the focus swell: one damped oscillator for the whole net
+src/ShakeCursor.*        shake-to-find for the cursor; nothing to do with the mesh
 src/MeshTransformer.*    IWindowTransformer + the Bezier mesh GL draw
 src/EffectManager.*      triggers, per-frame stepping, damage, config
 src/main.cpp             plugin entry points

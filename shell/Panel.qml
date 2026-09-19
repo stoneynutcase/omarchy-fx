@@ -57,6 +57,8 @@ Panel {
   property bool onHover: false
   property int  pulseStrength: 2
 
+  property bool shakeEnabled: true
+
   // One mesh resolution for both effects. The plugin keeps a key per effect;
   // this writes them together, because "how finely is the window tessellated"
   // is a rendering cost, not a per-effect taste.
@@ -64,7 +66,7 @@ Panel {
 
   // Anything on at all? That is what the bar icon and the middle-click toggle
   // act on.
-  readonly property bool enabled: root.wobblyEnabled || root.elasticEnabled || root.pulseEnabled
+  readonly property bool enabled: root.wobblyEnabled || root.elasticEnabled || root.pulseEnabled || root.shakeEnabled
 
   // Read-only echo of what the physics is actually running with, so a value
   // set in Lua is visible here rather than silently contradicting the sliders.
@@ -111,7 +113,8 @@ Panel {
     "elastic_tessellation", "elastic_period", "elastic_damping", "elastic_tilt",
     "elastic_follow", "elastic_max_stretch",
     "pulse_enabled", "pulse_on_switch", "pulse_on_click", "pulse_on_hover", "pulse_strength",
-    "pulse_tessellation", "pulse_amount", "pulse_period", "pulse_damping"
+    "pulse_tessellation", "pulse_amount", "pulse_period", "pulse_damping",
+    "shake_enabled"
   ]
 
   // Settings-file keys as the panel wrote them before there was more than one
@@ -185,6 +188,8 @@ Panel {
     root.onClick       = effective("pulse_on_click",  "pulse_on_click",  1) != 0
     root.onHover       = effective("pulse_on_hover",  "pulse_on_hover",  0) != 0
     root.pulseStrength = root.clamp5(effective("pulse_strength", "pulse_strength", 2))
+
+    root.shakeEnabled = effective("shake_enabled", "shake_enabled", 1) != 0
 
     var pa = Number(effective("pulse_amount",  "pulse_amount",  -1))
     var pp = Number(effective("pulse_period",  "pulse_period",  -1))
@@ -290,6 +295,7 @@ Panel {
       "pulse_on_click=" + (root.onClick ? "true" : "false"),
       "pulse_on_hover=" + (root.onHover ? "true" : "false"),
       "pulse_strength=" + root.pulseStrength,
+      "shake_enabled=" + (root.shakeEnabled ? "true" : "false"),
       "wobbly_tessellation=" + root.tessellation,
       "elastic_tessellation=" + root.tessellation,
       "pulse_tessellation=" + root.tessellation,
@@ -310,6 +316,7 @@ Panel {
     root.wobblyEnabled = next
     root.elasticEnabled = next
     root.pulseEnabled = next
+    root.shakeEnabled = next
     persist()
   }
 
@@ -472,12 +479,13 @@ Panel {
   // Which tab is showing. Not persisted: the panel opens on the wobble, the
   // effect people come for, and the other two are a click away.
   property string tab: "wobbly"
-  // Glyphs are Nerd Font: nf-md-waves, nf-fa-arrows_h, nf-fa-dot_circle_o, nf-md-grid.
+  // Glyphs are Nerd Font: nf-md-waves, nf-fa-arrows_h, nf-fa-dot_circle_o, nf-md-grid, nf-fa-magic.
   readonly property var tabs: [
     { value: "wobbly",  label: "Wobbly",  icon: "󰞍" },
     { value: "elastic", label: "Elastic", icon: "" },
     { value: "pulse",   label: "Pulse",   icon: "" },
-    { value: "mesh",    label: "Mesh",    icon: "󰋁" }
+    { value: "mesh",    label: "Mesh",    icon: "󰋁" },
+    { value: "extras",  label: "Extras",  icon: "" }
   ]
 
   KeyboardPanel {
@@ -487,7 +495,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(380))
+    contentWidth: panel.fittedContentWidth(Style.space(480))
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
     PanelKeyCatcher {
@@ -526,15 +534,31 @@ Panel {
 
         // ---- tabs -----------------------------------------------------------
 
-        ButtonGroup {
-          options: root.tabs
-          value: root.tab
-          focusable: false
-          foreground: root.fg
-          background: Color.popups.background
-          fontFamily: root.fontFam
-          fontSize: Style.font.bodySmall
-          onChanged: function(v) { root.tab = v }
+        // Not a ButtonGroup: that sizes its chips to their labels and stops
+        // short of the content width. These share the width equally, so the
+        // row ends where every row under it ends.
+        Row {
+          id: tabRow
+          width: parent.width
+          spacing: Style.spacing.md
+
+          Repeater {
+            model: root.tabs
+
+            delegate: Button {
+              required property var modelData
+              width: (tabRow.width - tabRow.spacing * (root.tabs.length - 1)) / root.tabs.length
+              text: modelData.label
+              iconText: modelData.icon
+              selected: root.tab === modelData.value
+              bordered: true
+              foreground: root.fg
+              background: Color.popups.background
+              fontFamily: root.fontFam
+              fontSize: Style.font.bodySmall
+              onClicked: root.tab = modelData.value
+            }
+          }
         }
 
         PanelSeparator { foreground: root.fg }
@@ -761,6 +785,33 @@ Panel {
             text: "swell " + Math.round(root.pulseAmount) + " px"
               + " · period " + Math.round(root.pulsePeriod) + " ms"
               + " · damping " + root.pulseDamping.toFixed(2)
+          }
+        }
+
+        // ---- extras ---------------------------------------------------------
+
+        Column {
+          width: parent.width
+          spacing: Style.space(10)
+          visible: root.tab === "extras"
+
+          Toggle {
+            width: parent.width
+            enabled: root.pluginLoaded
+            opacity: root.pluginLoaded ? 1 : 0.5
+            label: "Shake to find the cursor"
+            description: "Shake the pointer and it grows until you stop"
+            checked: root.shakeEnabled
+            foreground: root.fg
+            fontFamily: root.fontFam
+            onClicked: {
+              root.shakeEnabled = !root.shakeEnabled
+              root.persist()
+            }
+          }
+
+          Hint {
+            text: "Stays sharp with an SVG hyprcursor theme, e.g. rose-pine-hyprcursor."
           }
         }
 

@@ -57,6 +57,8 @@ static constexpr const char* CFG_PULSE_PERIOD    = "plugin:omarchy-fx:pulse_peri
 static constexpr const char* CFG_PULSE_DAMPING   = "plugin:omarchy-fx:pulse_damping";
 static constexpr const char* CFG_PULSE_TESS      = "plugin:omarchy-fx:pulse_tessellation";
 
+static constexpr const char* CFG_SHAKE_ENABLED   = "plugin:omarchy-fx:shake_enabled";
+
 // Both effects integrate in fixed substeps, so they look the same at 60 and
 // 240 Hz. The wobble's is KWin's 10 ms, kept for fidelity to the port; the
 // elastic spring is stiffer and wants a finer one. The frame cap keeps a stall
@@ -126,6 +128,8 @@ void CEffectManager::registerConfig() {
     FLOAT(CFG_PULSE_PERIOD, "override the swell period in ms, -1 to keep it", -1.F, -1.F, 2000.F);
     FLOAT(CFG_PULSE_DAMPING, "override the damping ratio, -1 to keep it", -1.F, -1.F, 4.F);
     INT(CFG_PULSE_TESS, "pulse render mesh quads per axis", 20, 2, 64);
+
+    BOOL(CFG_SHAKE_ENABLED, "shake the pointer and the cursor grows until you stop, KDE style", true);
 
     // A notification, not a log line: Log::logger is an inline variable, so a
     // plugin links its own uninitialised copy of it and anything logged through
@@ -297,6 +301,8 @@ void CEffectManager::loadSettings() {
                 m_overrides.pulsePeriod = std::stof(value);
             else if (key == "pulse_damping")
                 m_overrides.pulseDamping = std::stof(value);
+            else if (key == "shake_enabled")
+                m_overrides.shakeEnabled = asBool(value);
         } catch (const std::exception& e) { Log::logger->log(Log::WARN, "[omarchy-fx] bad value for '{}' in settings: {}", key, value); }
     }
 }
@@ -312,10 +318,14 @@ void CEffectManager::init() {
         m_shellEvaluated = false; // re-stat the bar layout on the next trigger
     }));
 
+    m_shake.init();
+
     m_listeners.emplace_back(Event::bus()->m_events.render.preChecks.listen([this](const PHLMONITOR& monitor) {
         syncDrag();
         scanAnimations(monitor);
         tick(monitor);
+        syncShake();
+        m_shake.tick();
     }));
 
     // React to the button press/release that starts and ends a drag without
@@ -327,10 +337,23 @@ void CEffectManager::init() {
     m_listeners.emplace_back(Event::bus()->m_events.window.active.listen([this](const PHLWINDOW& window, Desktop::eFocusReason reason) { onFocus(window, reason); }));
 
     m_listeners.emplace_back(Event::bus()->m_events.input.mouse.button.listen([this]() { syncDrag(); }));
-    m_listeners.emplace_back(Event::bus()->m_events.input.mouse.move.listen([this]() { syncDrag(); }));
+    m_listeners.emplace_back(Event::bus()->m_events.input.mouse.move.listen([this]() {
+        syncDrag();
+        m_shake.onMove();
+    }));
+}
+
+void CEffectManager::syncShake() {
+    if (!m_configOk)
+        return;
+
+    static auto PENABLED = CConfigValue<Config::BOOL>(CFG_SHAKE_ENABLED);
+    m_shake.setEnabled(shellAllows() && m_overrides.shakeEnabled.value_or(*PENABLED));
 }
 
 void CEffectManager::shutdown() {
+    m_shake.shutdown();
+
     for (auto& entry : m_entries) {
         detach(entry);
     }

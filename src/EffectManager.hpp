@@ -3,6 +3,7 @@
 #include "ElasticModel.hpp"
 #include "MeshTransformer.hpp"
 #include "PulseModel.hpp"
+#include "ShakeCursor.hpp"
 #include "WobblyModel.hpp"
 
 #include <hyprland/src/desktop/DesktopTypes.hpp>
@@ -34,6 +35,8 @@ namespace OmarchyFX {
         std::optional<bool>  pulseEnabled, pulseOnSwitch, pulseOnClick, pulseOnHover;
         std::optional<int>   pulseStrength, pulseTessellation;
         std::optional<float> pulseAmount, pulsePeriod, pulseDamping;
+
+        std::optional<bool>  shakeEnabled;
     };
 
     // Drives every effect in the plugin. A window gets at most one entry, and an
@@ -126,6 +129,11 @@ namespace OmarchyFX {
         // Hyprland reports the active window on every focus pass, including
         // ones that land on the window that already had it.
         PHLWINDOWREF                     m_lastActive;
+
+        // The one effect here that is not a window effect. Fed from the same
+        // listeners; owns nothing of the mesh.
+        CShakeCursor                     m_shake;
+        void                             syncShake();
 
         // A list, not a vector: find() and ensureEntry() hand out pointers into
         // it and entries are added while others are being walked.
