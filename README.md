@@ -20,9 +20,9 @@ plugin. Three of them so far, all built on the same deformable mesh:
 And one extra that is not a window effect: **shake to find the cursor** —
 shake the pointer and it grows until you stop, as in KDE Plasma.
 
-![A window's edge bowing mid-swap, the cursor magnified by a shake, and the settings panel](preview.png)
+![Windows stretching as the layout swaps them, a window wobbling under a drag, and the cursor growing under a shake](docs/demo.gif)
 
-*Caught mid-swap: the right window's edge still bowing from the elastic move, the cursor three times its size after a shake, and the panel that drives it all.*
+*Elastic swaps, a wobbly drag, and shake-to-find, in one take.*
 
 ## Why the effects are a Hyprland plugin, not an Omarchy shell plugin
 
