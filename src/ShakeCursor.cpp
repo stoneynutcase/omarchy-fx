@@ -59,41 +59,67 @@ struct CShakeCursor::SWorker {
                 jobs.pop_front();
             }
 
-            SRenderResult r{.shape = job.first, .px = job.second};
+            // Loading a style renders every shape in the theme at that size,
+            // so once the requested shape is out, the shapes the pointer is
+            // likely to pick up next — crossing into a text field, over a
+            // link — cost only a copy each. Rendering them now is what keeps
+            // the magnified cursor from dropping to normal size for a moment
+            // when the shape changes under it.
+            static const char* const COMMON[] = {"default", "text", "pointer", "grab", "grabbing", "crosshair", "move", "not-allowed", "wait", "progress",
+                                                 "ew-resize", "ns-resize", "nwse-resize", "nesw-resize", "col-resize", "row-resize"};
+
+            std::vector<SRenderResult> out;
+            out.push_back(SRenderResult{.shape = job.first, .px = job.second});
 
             if (mgr.valid()) {
                 const Hyprcursor::SCursorStyleInfo STYLE{.size = sc<unsigned int>(job.second)};
                 if (mgr.loadThemeStyle(STYLE)) {
-                    auto data = mgr.getShape(job.first.c_str(), STYLE);
-                    if (data.images.empty() || !data.images.front().surface)
-                        data = mgr.getShape("default", STYLE);
+                    const auto grab = [&](const std::string& name, SRenderResult& r) {
+                        auto data = mgr.getShape(name.c_str(), STYLE);
+                        if (data.images.empty() || !data.images.front().surface)
+                            return;
 
-                    if (!data.images.empty() && data.images.front().surface) {
                         const auto& IMG  = data.images.front();
                         auto        surf = IMG.surface;
                         cairo_surface_flush(surf);
 
-                        const int W = cairo_image_surface_get_width(surf);
-                        const int H = cairo_image_surface_get_height(surf);
-                        const int S = cairo_image_surface_get_stride(surf);
+                        const int   W = cairo_image_surface_get_width(surf);
+                        const int   H = cairo_image_surface_get_height(surf);
+                        const int   S = cairo_image_surface_get_stride(surf);
                         const auto* D = cairo_image_surface_get_data(surf);
 
-                        if (D && W > 0 && H > 0 && cairo_image_surface_get_format(surf) == CAIRO_FORMAT_ARGB32) {
-                            r.pixels.resize(sc<size_t>(W) * H * 4);
-                            for (int y = 0; y < H; ++y)
-                                std::memcpy(r.pixels.data() + sc<size_t>(y) * W * 4, D + sc<size_t>(y) * S, sc<size_t>(W) * 4);
-                            r.size     = W;
-                            r.hotspotX = IMG.hotspotX;
-                            r.hotspotY = IMG.hotspotY;
-                            r.ok       = W == H;
-                        }
+                        if (!D || W <= 0 || H != W || cairo_image_surface_get_format(surf) != CAIRO_FORMAT_ARGB32)
+                            return;
+
+                        r.pixels.resize(sc<size_t>(W) * H * 4);
+                        for (int y = 0; y < H; ++y)
+                            std::memcpy(r.pixels.data() + sc<size_t>(y) * W * 4, D + sc<size_t>(y) * S, sc<size_t>(W) * 4);
+                        r.size     = W;
+                        r.hotspotX = IMG.hotspotX;
+                        r.hotspotY = IMG.hotspotY;
+                        r.ok       = true;
+                    };
+
+                    grab(job.first, out.front());
+                    if (!out.front().ok && job.first != "default")
+                        grab("default", out.front());
+
+                    for (const auto* name : COMMON) {
+                        if (name == job.first)
+                            continue;
+                        SRenderResult r{.shape = name, .px = job.second};
+                        grab(name, r);
+                        if (r.ok)
+                            out.push_back(std::move(r));
                     }
+
                     mgr.cursorSurfaceStyleDone(STYLE);
                 }
             }
 
             std::lock_guard lock(mutex);
-            results.push_back(std::move(r));
+            for (auto& r : out)
+                results.push_back(std::move(r));
         }
     }
 };
@@ -129,7 +155,7 @@ static constexpr double RASTER_STRETCH = 1.25;
 // is heading to; the tween in between scales that render. A style load
 // renders the whole theme, so every render avoided is felt.
 static constexpr int    VECTOR_STEP   = 16;
-static constexpr size_t RENDER_CACHE  = 16;
+static constexpr size_t RENDER_CACHE  = 96; // sizes times shapes; a 240 px render is 230 KB
 
 // KWin's: movements smaller than the tolerance count as movement in any
 // direction, so a wobble along one axis is not a string of reversals.
@@ -213,6 +239,12 @@ void CShakeCursor::drainRenders() {
     for (auto& r : done) {
         std::erase_if(m_pending, [&r](const auto& p) { return p.first == r.shape && p.second == r.px; });
         if (!r.ok)
+            continue;
+
+        // The worker sends the common shapes along with the one asked for;
+        // one it already sent, or a request that raced, is not stored twice.
+        const bool HAVE = std::ranges::any_of(m_renders, [&r](const auto& R) { return R.shape == r.shape && R.px == r.px; });
+        if (HAVE)
             continue;
 
         const auto SIZE = Vector2D{sc<double>(r.size), sc<double>(r.size)};
@@ -441,9 +473,16 @@ bool CShakeCursor::renderVector(int px) {
         requestRender(m_shape, px + std::max(VECTOR_STEP, sc<int>(std::round(BASE * OVER * outputScale() / VECTOR_STEP)) * VECTOR_STEP));
     }
 
+    // Nothing rendered for this shape yet: keep showing whatever is on screen
+    // now, the previous shape at its size, rather than drop to normal size
+    // for the frames until the worker delivers. A wrong shape for a moment is
+    // invisible; a size jump is not.
     const SRender* use = best ? best : backup;
-    if (!use)
+    if (!use) {
+        if (m_bigBuffer)
+            return true;
         return false;
+    }
 
     if (m_bigBuffer != use->buffer) {
         m_bigBuffer  = use->buffer;
