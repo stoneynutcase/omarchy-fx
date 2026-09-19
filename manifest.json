@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "omarchy-fx",
   "name": "Window Effects",
-  "version": "0.2.0",
-  "author": "omarchy-fx",
+  "version": "0.4.0",
+  "author": "Stanny Nuytkens",
   "license": "GPL-2.0-or-later",
-  "description": "Bar toggle and settings panel for the omarchy-fx window effects Hyprland plugin.",
+  "description": "Window effects for Hyprland: wobbly windows, elastic tiling moves, a focus pulse, and shake-to-find for the cursor. This widget is the settings panel; the effects are a Hyprland plugin built by install.sh.",
   "kinds": [
     "bar-widget"
   ],

@@ -339,7 +339,11 @@ Panel {
   }
 
   // Is the compositor plugin loaded? Stock `hyprctl plugin list`; matched as
-  // text so it works whether or not this Hyprland gives JSON for it.
+  // text so it works whether or not this Hyprland gives JSON for it. The
+  // version it reports is compared with this widget's manifest: after
+  // `omarchy plugin update` the two drift until the .so is rebuilt.
+  property string loadedVersion: ""
+
   Process {
     id: loadedProc
     command: ["hyprctl", "plugin", "list"]
@@ -351,8 +355,75 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         sawOutput = text.length > 0
-        root.pluginLoaded = text.indexOf("omarchy-fx") !== -1
+        var at = text.indexOf("omarchy-fx")
+        root.pluginLoaded = at !== -1
+        var m = at !== -1 ? /Version:\s*(\S+)/.exec(text.substring(at)) : null
+        root.loadedVersion = m ? m[1] : ""
       }
+    }
+  }
+
+  // ---- building the compositor half from the panel ------------------------
+
+  // This file's own directory: ~/.config/omarchy/plugins/omarchy-fx, whether
+  // install.sh copied the widget here or `omarchy plugin add` cloned the whole
+  // repo here. In the latter case install.sh sits right next to this file.
+  readonly property string pluginDir: {
+    var u = String(Qt.resolvedUrl("."))
+    if (u.indexOf("file://") === 0) u = u.substring(7)
+    return u.replace(/\/+$/, "")
+  }
+
+  property string manifestVersion: ""
+  readonly property bool stale: root.pluginLoaded && root.manifestVersion !== "" && root.loadedVersion !== "" && root.manifestVersion !== root.loadedVersion
+
+  // install.sh next to this file means the whole repo is here (`omarchy
+  // plugin add`), and the panel can run it. A copied widget cannot; it points
+  // at the clone instead.
+  property bool   canBuild: false
+  property bool   installing: false
+  property string installStatus: ""
+
+  FileView {
+    id: manifestFile
+    path: root.pluginDir + "/manifest.json"
+    printErrors: false
+    onLoaded: {
+      try { root.manifestVersion = String(JSON.parse(text()).version || "") } catch (e) { root.manifestVersion = "" }
+    }
+  }
+
+  FileView {
+    id: installerFile
+    path: root.pluginDir + "/install.sh"
+    printErrors: false
+    onLoaded: root.canBuild = true
+    onLoadFailed: root.canBuild = false
+  }
+
+  function buildAndInstall() {
+    if (root.installing) return
+    root.installing = true
+    root.installStatus = "Building… this takes a minute. A password prompt is for the rebuild hook."
+    installProc.running = false
+    installProc.running = true
+  }
+
+  // install.sh, then whatever gets the fresh .so into the running compositor:
+  // a stale one is unloaded first, a reload picks up a newly declared one, and
+  // the explicit load covers a plugin that was declared before.
+  Process {
+    id: installProc
+    command: ["bash", "-c",
+      'cd "$1" && ./install.sh >/tmp/omarchy-fx-install.log 2>&1 || exit 1; ' +
+      'so="${XDG_DATA_HOME:-$HOME/.local/share}/hyprland/plugins/omarchy-fx.so"; ' +
+      'hyprctl plugin unload "$so" >/dev/null 2>&1; hyprctl reload >/dev/null 2>&1; ' +
+      'hyprctl plugin list | grep -q omarchy-fx || hyprctl plugin load "$so" >/dev/null 2>&1; exit 0',
+      "_", root.pluginDir]
+    onExited: function(code) {
+      root.installing = false
+      root.installStatus = code === 0 ? "" : "Build failed. See /tmp/omarchy-fx-install.log"
+      root.refresh()
     }
   }
 
@@ -519,17 +590,52 @@ Panel {
           font.bold: true
         }
 
-        Text {
+        // The effects are a Hyprland plugin this widget cannot ship prebuilt:
+        // Hyprland's plugin ABI changes with every release, so the .so is built
+        // here, on this machine. Not loaded, or older than this widget: offer
+        // the build. It is install.sh, run in the background.
+        Column {
           width: parent.width
-          visible: !root.pluginLoaded || root.configError
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          color: root.bar ? root.bar.urgent : Color.urgent
-          font.family: root.fontFam
-          font.pixelSize: Style.font.bodySmall
-          text: root.configError
-            ? "The plugin loaded but could not register its options."
-            : "The omarchy-fx Hyprland plugin is not loaded, so nothing will deform. Load it with:\nhyprctl plugin load ~/.local/share/hyprland/plugins/omarchy-fx.so"
+          spacing: Style.space(8)
+          visible: !root.pluginLoaded || root.configError || root.stale || root.installing || root.installStatus !== ""
+
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            color: root.bar ? root.bar.urgent : Color.urgent
+            font.family: root.fontFam
+            font.pixelSize: Style.font.bodySmall
+            text: root.configError
+              ? "The plugin loaded but could not register its options."
+              : root.stale
+                ? "The compositor plugin is " + root.loadedVersion + ", this widget is " + root.manifestVersion + ". Rebuild it to match."
+                : !root.pluginLoaded
+                  ? (root.canBuild
+                      ? "The effects live in a Hyprland plugin that has to be built on this machine. Nothing will deform until it is."
+                      : "The effects live in a Hyprland plugin that is not loaded. Run ./install.sh in the omarchy-fx clone, then:\nhyprctl plugin load ~/.local/share/hyprland/plugins/omarchy-fx.so")
+                  : ""
+            visible: text !== ""
+          }
+
+          Button {
+            visible: root.canBuild && !root.configError
+            enabled: !root.installing
+            opacity: root.installing ? 0.5 : 1
+            bordered: true
+            text: root.installing ? "Building…" : root.stale ? "Rebuild the plugin" : "Build and install the plugin"
+            iconText: "" // nf-fa-wrench
+            foreground: root.fg
+            background: Color.popups.background
+            fontFamily: root.fontFam
+            fontSize: Style.font.bodySmall
+            onClicked: root.buildAndInstall()
+          }
+
+          Hint {
+            visible: root.installStatus !== ""
+            text: root.installStatus
+          }
         }
 
         // ---- tabs -----------------------------------------------------------

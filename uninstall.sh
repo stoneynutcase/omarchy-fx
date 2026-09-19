@@ -49,11 +49,19 @@ fi
 # Settings written by the panel; ours alone, so it goes with the plugin.
 rm -f "$OMARCHY_DIR/omarchy-fx.conf"
 
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 for id in "${SHELL_IDS[@]}"; do
-  if [[ -d "$OMARCHY_DIR/plugins/$id" ]]; then
-    rm -rf "${OMARCHY_DIR:?}/plugins/$id"
-    echo ":: removed the shell plugin from $OMARCHY_DIR/plugins/$id"
+  dir="$OMARCHY_DIR/plugins/$id"
+  [[ -d "$dir" ]] || continue
+  # Added with `omarchy plugin add`, the plugin directory is this very
+  # checkout. Deleting it from underneath a running script is unkind, and
+  # Omarchy keeps a backup when it does the removal itself.
+  if [[ "$(realpath -m "$dir")" == "$(realpath -m "$REPO")" ]]; then
+    echo ":: this checkout is the shell plugin; finish with: omarchy plugin remove $id"
+    continue
   fi
+  rm -rf "${dir:?}"
+  echo ":: removed the shell plugin from $dir"
 done
 command -v omarchy-shell >/dev/null 2>&1 && omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 

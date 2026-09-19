@@ -30,7 +30,8 @@ only exists inside Hyprland's render pass, so the effects ship as a Hyprland
 plugin (`.so`), loaded from the Omarchy Hyprland config.
 
 The *settings* are a different matter, and those do ship as a shell plugin — a
-bar widget with a panel behind it, in `shell/`. The two halves meet at one
+bar widget with a panel behind it, at the root of this repo so that
+`omarchy plugin add` can install it. The two halves meet at one
 `key=value` file, `~/.config/omarchy/omarchy-fx.conf`: the panel writes it and
 runs a stock `hyprctl reload`, and the compositor plugin re-reads it whenever
 the config reloads. Keys absent from that file fall through to the Hyprland
@@ -55,6 +56,21 @@ rebuild happens for you; see [Staying in step with Hyprland](#staying-in-step-wi
 
 ## Install
 
+The easy way, on Omarchy:
+
+```bash
+omarchy plugin add https://github.com/stoneynutcase/omarchy-fx --enable
+```
+
+That puts the **Window Effects** widget on the bar. Click it: the panel offers
+to **build and install the plugin**, which is the compositor half. It takes
+about a minute and asks for your password once, for the pacman hook that
+rebuilds the plugin after every Hyprland update. When it is done the effects
+are live. After `omarchy plugin update omarchy-fx` the panel notices the
+compositor plugin is older than the widget and offers the rebuild again.
+
+The same, by hand, from a clone anywhere:
+
 ```bash
 ./install.sh
 ```
@@ -65,10 +81,11 @@ appends `require("hypr.omarchy_fx")` to `~/.config/hypr/hyprland.lua` (keeping a
 timestamped backup of anything it touches).
 
 On an Omarchy shell it also installs the bar widget to
-`~/.config/omarchy/plugins/omarchy-fx/` and enables it on the right of the bar.
-Re-running the installer leaves the placement alone, so
-`omarchy bar move omarchy-fx` sticks. Click the widget for the settings panel,
-middle-click it to turn every effect off and on.
+`~/.config/omarchy/plugins/omarchy-fx/` and enables it on the right of the bar
+— unless that directory *is* the clone, as it is after `omarchy plugin add`, in
+which case there is nothing to copy. Re-running the installer leaves the
+placement alone, so `omarchy bar move omarchy-fx` sticks. Click the widget for
+the settings panel, middle-click it to turn every effect off and on.
 
 > Upgrading from the version that had only the wobble: the widget used to be
 > `omarchy-fx.wobbly`, one widget per effect. The installer disables and removes
@@ -377,7 +394,8 @@ src/MeshTransformer.*    IWindowTransformer + the Bezier mesh GL draw
 src/EffectManager.*      triggers, per-frame stepping, damage, config
 src/main.cpp             plugin entry points
 hypr/omarchy_fx.lua      the config fragment install.sh drops into ~/.config/hypr
-shell/                   the bar widget and settings panel
+manifest.json            the Omarchy shell plugin: the bar widget and its
+BarWidget.qml, Panel.qml settings panel, at the root for `omarchy plugin add`
 ```
 
 ## Credits

@@ -10,7 +10,7 @@ ENTRY="$HYPR_DIR/hyprland.lua"
 SNIPPET='require("hypr.omarchy_fx")'
 
 # The bar widget and settings panel, as an Omarchy shell plugin. The id has to
-# match the "id" in shell/manifest.json — that is what names the directory.
+# match the "id" in manifest.json — that is what names the directory.
 SHELL_ID="omarchy-fx"
 SHELL_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$SHELL_ID"
 
@@ -110,9 +110,16 @@ if command -v omarchy-shell >/dev/null 2>&1; then
     rm -rf "$OLD_SHELL_DIR"
   fi
 
-  echo ":: installing shell plugin to $SHELL_DIR"
-  mkdir -p "$SHELL_DIR"
-  install -m 0644 "$REPO"/shell/manifest.json "$REPO"/shell/*.qml "$SHELL_DIR/"
+  # Added with `omarchy plugin add`, this checkout *is* the shell plugin
+  # directory, and copying it onto itself is pointless. Otherwise the widget
+  # files at the repo root go in.
+  if [[ "$(realpath -m "$REPO")" == "$(realpath -m "$SHELL_DIR")" ]]; then
+    echo ":: shell plugin is this checkout, nothing to copy"
+  else
+    echo ":: installing shell plugin to $SHELL_DIR"
+    mkdir -p "$SHELL_DIR"
+    install -m 0644 "$REPO"/manifest.json "$REPO"/BarWidget.qml "$REPO"/Panel.qml "$SHELL_DIR/"
+  fi
 
   omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
 
