@@ -212,6 +212,37 @@ effects themselves:
 Skip the hook with `./install.sh --no-hook` — then rebuilding after each
 Hyprland update is back to being your job. `uninstall.sh` removes both files.
 
+### Can this lock me out of my session?
+
+It is the right question to ask of anything the compositor loads at startup,
+so here is every route, and what stands in the way of each.
+
+- **A stale build after a Hyprland update.** Hyprland's own loader compares
+  only a coarse API version string, which rarely changes, so it would let a
+  stale `.so` in. This plugin therefore checks the full ABI hash itself, first
+  thing, and refuses to load on a mismatch with a notification. Before that
+  point the pacman hook has normally rebuilt it already, and if the rebuild
+  failed the hook renamed the `.so` to `.stale` so there is nothing to load.
+- **A missing `.so`**, after a failed rebuild or a half-done uninstall: the
+  config's `hl.plugin.load` reports an error and Hyprland carries on.
+- **A bug in this plugin that crashes within seconds of loading.** That is the
+  one route the checks above do not cover, and it would repeat at every login.
+  So the plugin keeps a marker file, `~/.local/state/omarchy-fx/loading`,
+  from the moment it loads until it has rendered for ten seconds, and removes
+  it on a clean unload. Finding the marker at startup means the last session
+  ended right after loading; the plugin then skips that session, says so in a
+  notification, and clears the marker so the next login tries again. A real
+  crash loop becomes every other login working, with the reason on screen,
+  rather than no login at all. A hard reset within ten seconds of logging in
+  gets the same one-session skip, which is the price of the guard.
+- **A crash later in a session**, from a bug in an effect: that is a crash of
+  the compositor, as with any plugin, and it is not repeated at login unless
+  it happens within those first ten seconds. Please report it with the
+  backtrace.
+
+If you ever do need to get the plugin out of the way from a TTY, it is one
+line: remove `require("hypr.omarchy_fx")` from `~/.config/hypr/hyprland.lua`.
+
 Relatedly, the installer never writes the `.so` in place. It installs to a
 temporary name and `rename(2)`s it over the old one, because a running Hyprland
 has the previous build mapped, and truncating that file underneath the
