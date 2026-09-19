@@ -55,9 +55,11 @@ for arg in "$@"; do
   esac
 done
 
+# Nothing is installed from here: the check only names what is missing. On
+# Omarchy the headers come with the hyprland package itself.
 if ! pkg-config --exists hyprland; then
-  echo "error: Hyprland development headers not found. Install them with:" >&2
-  echo "       omarchy pkg add hyprland" >&2
+  echo "error: Hyprland development headers not found (pkg-config cannot see hyprland)." >&2
+  echo "       On Omarchy they are part of the hyprland package; install that and re-run." >&2
   exit 1
 fi
 
