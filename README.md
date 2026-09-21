@@ -82,7 +82,7 @@ The same, by hand, from a clone anywhere:
 That builds `omarchy-fx.so`, installs it to
 `~/.local/share/hyprland/plugins/`, drops `~/.config/hypr/omarchy_fx.lua`, and
 appends `require("hypr.omarchy_fx")` to `~/.config/hypr/hyprland.lua` (keeping a
-timestamped backup of anything it touches).
+random-named backup of anything it touches, beside the original).
 
 On an Omarchy shell it also installs the bar widget to
 `~/.config/omarchy/plugins/omarchy-fx/` and enables it on the right of the bar
@@ -146,6 +146,19 @@ user with `runuser` and an environment built from scratch, and reports. The
 build, the install of the `.so` and the disarming of a stale one all run as
 you. The four paths baked in are shell-quoted with `printf %q`, so a path with
 a quote or a `$` in it is a string, never code.
+
+How those two files get there matters as much as what is in them, because the
+password prompt is a window in which anything running as you could swap what
+root is about to copy. So root never opens a path you can write to. The
+installer builds the runner text in memory, reads the hook in likewise, hashes
+both, and passes the two SHA-256 sums as arguments to the one privileged
+command, fixed at the moment of the prompt. The content itself goes to root on
+stdin, from those in-memory copies. Root reads it into a directory only root
+can see, checks both sums against its arguments, and installs from there or
+not at all. `tests/hook-install.sh` runs that step unprivileged, in a user
+namespace with a stand-in for `sudo`, overwrites both source files while the
+prompt is open, and confirms the swapped content never lands; a second case
+replaces the stream itself and confirms root refuses with nothing written.
 
 **Environment and tools:** the scripts set `PATH` to the system directories
 and drop loader and shell variables rather than inherit them, and the runner
@@ -216,7 +229,9 @@ effects themselves:
   faults during compositor startup costs you the login.
 
 Skip the hook with `./install.sh --no-hook` — then rebuilding after each
-Hyprland update is back to being your job. `uninstall.sh` removes both files.
+Hyprland update is back to being your job. If the prompt was declined or root
+was not available, `./install.sh --hook-only` installs just the hook later,
+without rebuilding. `uninstall.sh` removes both files.
 
 ### Can this lock me out of my session?
 
@@ -483,6 +498,8 @@ src/MeshTransformer.*    IWindowTransformer + the Bezier mesh GL draw
 src/EffectManager.*      triggers, per-frame stepping, damage, config
 src/main.cpp             plugin entry points
 hypr/omarchy_fx.lua      the config fragment install.sh drops into ~/.config/hypr
+pacman/                  the rebuild hook and the template for its root-run runner
+tests/hook-install.sh    the hook step under a swapped-source attack, no root needed
 manifest.json            the Omarchy shell plugin: the bar widget and its
 BarWidget.qml, Panel.qml settings panel, at the root for `omarchy plugin add`
 ```

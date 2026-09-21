@@ -32,28 +32,129 @@ RUNNER="/usr/local/bin/omarchy-fx-rebuild"
 
 # Root, for the two hook paths. sudo can only ask for a password on a terminal;
 # run from a launcher, a GUI or an agent there is none, and polkit's graphical
-# agent (which Omarchy always runs) is what can still ask.
-as_root() {
-  if [[ -t 0 ]] || ! command -v pkexec >/dev/null 2>&1; then
-    sudo "$@"
+# agent (which Omarchy always runs) is what can still ask. Decided once, here:
+# the hook step feeds root's stdin from a pipe, and by then fd 0 no longer says
+# whether there is a terminal.
+if [[ -t 0 ]] || ! command -v pkexec >/dev/null 2>&1; then
+  ROOT_VIA=sudo
+else
+  ROOT_VIA=pkexec
+fi
+as_root() { "$ROOT_VIA" "$@"; }
+
+# What root runs, verbatim, to install the hook. Root never opens a path this
+# user can write to: the two files arrive on its stdin, framed as one line
+# "<runner bytes> <hook bytes>" followed by both back to back, and the SHA-256
+# of each is fixed in root's arguments at the moment of the prompt. Root reads
+# the stream into a directory only it can see, checks both hashes against the
+# arguments, and installs nothing unless both match. So content swapped on
+# disk after the prompt was authorized never reaches the root-owned paths:
+# the stream was produced from memory before the prompt, and a stream that
+# somehow differs from what was hashed is refused.
+read -r -d '' ROOT_INSTALL <<'EOF' || true
+set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin
+umask 022
+runner_sha=$1 hook_sha=$2 runner_dst=$3 hook_dst=$4
+fail() { echo "omarchy-fx: $*" >&2; exit 1; }
+stage="$(mktemp -d)"
+trap 'rm -rf -- "$stage"' EXIT
+IFS=' ' read -r runner_len hook_len || fail "no content on stdin"
+[[ "$runner_len" =~ ^[0-9]+$ && "$hook_len" =~ ^[0-9]+$ ]] || fail "malformed stream header"
+head -c "$runner_len" >"$stage/runner"
+head -c "$hook_len" >"$stage/hook"
+[[ "$(head -c 1 | wc -c)" == 0 ]] || fail "trailing data on stdin"
+[[ "$(sha256sum -- "$stage/runner" | cut -d' ' -f1)" == "$runner_sha" ]] ||
+  fail "runner content does not match the hash it was authorized with; nothing installed"
+[[ "$(sha256sum -- "$stage/hook" | cut -d' ' -f1)" == "$hook_sha" ]] ||
+  fail "hook content does not match the hash it was authorized with; nothing installed"
+install -Dm 0755 -- "$stage/runner" "$runner_dst"
+install -Dm 0644 -- "$stage/hook" "$hook_dst"
+EOF
+
+# The user side of the same step. The runner text is built in memory from the
+# template, the hook read in likewise, both hashed, and then streamed to root
+# from those variables — nothing root receives is re-read from disk after the
+# prompt. Returns non-zero if root refused or was not granted.
+install_hook() {
+  echo ":: installing the rebuild hook (needs root)"
+
+  # The runner is executed by root. The four values baked into it are
+  # shell-quoted with printf %q, so a path with a quote, a dollar or a space
+  # in it is a string in the script rather than code — and a newline in one
+  # is refused outright, since %q would keep it but the file would not read
+  # as intended.
+  local v
+  for v in "$REPO" "$HOME" "$PLUGIN_SO"; do
+    if [[ "$v" == *$'\n'* ]]; then
+      echo "error: a path with a newline in it cannot go in the rebuild hook." >&2
+      return 1
+    fi
+  done
+
+  # $(...) drops trailing newlines; the sentinel keeps them.
+  local runner hook line
+  runner="$(
+    while IFS= read -r line; do
+      if [[ "$line" == "# @CONFIG@" ]]; then
+        printf 'REPO=%q\nRUN_AS=%q\nRUN_HOME=%q\nPLUGIN_SO=%q\n' "$REPO" "$(id -un)" "$HOME" "$PLUGIN_SO"
+      else
+        printf '%s\n' "$line"
+      fi
+    done <"$REPO/pacman/omarchy-fx-rebuild.in"
+    printf x
+  )"
+  runner="${runner%x}"
+  hook="$(cat -- "$REPO/pacman/95-omarchy-fx-rebuild.hook"; printf x)"
+  hook="${hook%x}"
+
+  local runner_sha hook_sha runner_len hook_len
+  runner_sha="$(printf '%s' "$runner" | sha256sum | cut -d' ' -f1)"
+  hook_sha="$(printf '%s' "$hook" | sha256sum | cut -d' ' -f1)"
+  runner_len="$(printf '%s' "$runner" | wc -c)"
+  hook_len="$(printf '%s' "$hook" | wc -c)"
+
+  # One root call for both files: pkexec asks for the password on every
+  # invocation, so two calls would mean two dialogs. `install` unlinks the
+  # destination before creating it, so it never writes through a link.
+  if { printf '%s %s\n' "$runner_len" "$hook_len"; printf '%s%s' "$runner" "$hook"; } |
+       as_root /bin/bash -c "$ROOT_INSTALL" omarchy-fx-hook "$runner_sha" "$hook_sha" "$RUNNER" "$HOOK"; then
+    echo "   $HOOK"
+    echo "   $RUNNER"
   else
-    pkexec "$@"
+    return 1
   fi
 }
 
 # --plugin-only rebuilds and reinstalls just the .so. It is what the pacman hook
 # runs after a Hyprland update, when the config and the bar widget are already
-# in place and only the binary has gone stale.
+# in place and only the binary has gone stale. --hook-only installs just the
+# hook, for when root was not available the first time.
 PLUGIN_ONLY=0
+HOOK_ONLY=0
 WANT_HOOK=1
 for arg in "$@"; do
   case "$arg" in
     --plugin-only) PLUGIN_ONLY=1 ;;
+    --hook-only)   HOOK_ONLY=1 ;;
     --no-hook)     WANT_HOOK=0 ;;
-    -h|--help)     echo "usage: ${0##*/} [--plugin-only] [--no-hook]"; exit 0 ;;
+    -h|--help)     echo "usage: ${0##*/} [--plugin-only | --hook-only] [--no-hook]"; exit 0 ;;
     *)             echo "error: unknown option '$arg'" >&2; exit 1 ;;
   esac
 done
+if (( HOOK_ONLY )) && (( PLUGIN_ONLY || ! WANT_HOOK )); then
+  echo "error: --hook-only cannot be combined with --plugin-only or --no-hook" >&2
+  exit 1
+fi
+
+if (( HOOK_ONLY )); then
+  if ! command -v pacman >/dev/null 2>&1; then
+    echo "error: not a pacman system, there is no rebuild hook to install." >&2
+    exit 1
+  fi
+  install_hook || { echo "error: could not install the rebuild hook." >&2; exit 1; }
+  exit 0
+fi
 
 # Nothing is installed from here: the check only names what is missing. On
 # Omarchy the headers come with the hyprland package itself.
@@ -173,43 +274,11 @@ fi
 if (( WANT_HOOK )); then
   if ! command -v pacman >/dev/null 2>&1; then
     echo ":: not a pacman system, skipping the rebuild hook"
-  else
-    echo ":: installing the rebuild hook (needs root)"
-
-    # The runner is executed by root. The four values baked into it are
-    # shell-quoted with printf %q, so a path with a quote, a dollar or a
-    # space in it is a string in the script rather than code — and a newline
-    # in one is refused outright, since %q would keep it but the file would
-    # not read as intended.
-    for v in "$REPO" "$HOME" "$PLUGIN_SO"; do
-      if [[ "$v" == *$'\n'* ]]; then
-        echo "error: a path with a newline in it cannot go in the rebuild hook." >&2
-        exit 1
-      fi
-    done
-    TMP_RUNNER="$(mktemp)"
-    while IFS= read -r line; do
-      if [[ "$line" == "# @CONFIG@" ]]; then
-        printf 'REPO=%q\nRUN_AS=%q\nRUN_HOME=%q\nPLUGIN_SO=%q\n' "$REPO" "$(id -un)" "$HOME" "$PLUGIN_SO"
-      else
-        printf '%s\n' "$line"
-      fi
-    done <"$REPO/pacman/omarchy-fx-rebuild.in" >"$TMP_RUNNER"
-
-    # One root call for both files: pkexec asks for the password on every
-    # invocation, so two calls would mean two dialogs. `install` unlinks the
-    # destination before creating it, so it never writes through a link.
-    if as_root /bin/sh -c 'install -Dm 0755 "$1" "$2" && install -Dm 0644 "$3" "$4"' _ \
-         "$TMP_RUNNER" "$RUNNER" "$REPO/pacman/95-omarchy-fx-rebuild.hook" "$HOOK"; then
-      echo "   $HOOK"
-      echo "   $RUNNER"
-    else
-      echo "warning: could not install the rebuild hook." >&2
-      echo "         Re-run ./install.sh when root is available, or pass" >&2
-      echo "         --no-hook to stop being asked. Without it, remember to" >&2
-      echo "         re-run ./install.sh after every Hyprland update." >&2
-    fi
-    rm -f "$TMP_RUNNER"
+  elif ! install_hook; then
+    echo "warning: could not install the rebuild hook." >&2
+    echo "         Run ./install.sh --hook-only when root is available, or pass" >&2
+    echo "         --no-hook to stop being asked. Without it, remember to" >&2
+    echo "         re-run ./install.sh after every Hyprland update." >&2
   fi
 fi
 
