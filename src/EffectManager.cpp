@@ -1,14 +1,12 @@
 #include "EffectManager.hpp"
+#include "compat.hpp"
 #include "globals.hpp"
 
 #include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/config/values/types/BoolValue.hpp>
 #include <hyprland/src/config/values/types/FloatValue.hpp>
 #include <hyprland/src/config/values/types/IntValue.hpp>
-#include <hyprland/src/debug/log/Logger.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/supplementary/DragController.hpp>
@@ -303,7 +301,7 @@ void CEffectManager::loadSettings() {
                 m_overrides.pulseDamping = std::stof(value);
             else if (key == "shake_enabled")
                 m_overrides.shakeEnabled = asBool(value);
-        } catch (const std::exception& e) { Log::logger->log(Log::WARN, "[omarchy-fx] bad value for '{}' in settings: {}", key, value); }
+        } catch (const std::exception& e) { FX_LOG(Log::WARN, "[omarchy-fx] bad value for '{}' in settings: {}", key, value); }
     }
 }
 
@@ -472,9 +470,15 @@ CEffectManager::SEntry* CEffectManager::ensureEntry(const PHLWINDOW& window) {
     auto state = makeShared<SMeshState>();
     syncFrameGeometry(window, *state);
 
+#ifdef OMARCHY_FX_HL057
+    // The list owns it. It also drops any transformer that reports inactive,
+    // whenever Hyprland tidies up, so ours stays active until detach().
+    auto raw = window->effects().transformers()->emplace<CMeshTransformer>(state);
+#else
     auto transformer = makeUnique<CMeshTransformer>(state);
     auto raw         = transformer.get();
     window->m_transformers.emplace_back(std::move(transformer));
+#endif
 
     m_entries.emplace_back(SEntry{
         .window      = window,
@@ -498,7 +502,16 @@ void CEffectManager::detach(SEntry& entry) {
         damage.expand(8);
         g_pHyprRenderer->damageBox(damage);
 
+#ifdef OMARCHY_FX_HL057
+        // The list has no remove-by-pointer; going inactive and asking it to
+        // sweep is the supported way out. The transformer's destructor runs in
+        // there, so nothing below may touch entry.transformer.
+        if (entry.state)
+            entry.state->alive = false;
+        WINDOW->effects().transformers()->removeInactive();
+#else
         std::erase_if(WINDOW->m_transformers, [&entry](const auto& t) { return t.get() == entry.transformer; });
+#endif
     }
 
     entry.transformer = nullptr;
@@ -660,19 +673,19 @@ void CEffectManager::scanAnimations(const PHLMONITOR& monitor) {
         return;
 
     for (const auto& WINDOW : Desktop::windowState()->windows()) {
-        if (!WINDOW->m_isMapped || WINDOW->isHidden() || WINDOW->m_monitor.lock() != monitor)
+        if (!Compat::mapped(WINDOW) || WINDOW->isHidden() || WINDOW->m_monitor.lock() != monitor)
             continue;
 
         // The open animation is Hyprland's own, and it animates the geometry
         // from nothing — stretching that would fight it rather than dress it.
-        if (WINDOW->m_animatingIn)
+        if (Compat::animatingIn(WINDOW))
             continue;
 
         // The three triggers are independent: a window you throw at another
         // workspace stretches on the way even if the swap trigger is off.
         const bool CARRIED = WORKSPACE && pendingWorkspaceMove(WINDOW);
 
-        if (!CARRIED && (WINDOW->m_isFloating ? !FLOATING : !TILED))
+        if (!CARRIED && (Compat::floating(WINDOW) ? !FLOATING : !TILED))
             continue;
 
         if (CARRIED ? !travelling(WINDOW) : !geometryAnimating(WINDOW))
@@ -731,7 +744,7 @@ void CEffectManager::onFocus(const PHLWINDOW& window, Desktop::eFocusReason reas
         return;
 
     // A window that is still opening has Hyprland's own animation on it.
-    if (!window->m_isMapped || window->isHidden() || window->m_animatingIn)
+    if (!Compat::mapped(window) || window->isHidden() || Compat::animatingIn(window))
         return;
 
     // One that fills its monitor has nowhere to swell to. Judged by size rather

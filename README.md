@@ -529,7 +529,11 @@ effect by Cédric Borgese, GPL-2.0-or-later.
   in its default `looknfeel.lua`). Without it a workspace switch is instant,
   there is no travel to dress, and the setting does nothing. Re-enable it in
   your own `~/.config/hypr/looknfeel.lua`, which loads after Omarchy's defaults.
-- Written against the Hyprland 0.56 plugin API.
+- Builds against the Hyprland 0.56 and 0.57 plugin APIs (Omarchy stable and
+  edge); `src/compat.hpp` picks the right one from the installed headers.
+- Hyprland 0.57 has a wobble of its own, `decoration:wobble:enabled`, off by
+  default. Leave it off while omarchy-fx's wobble is on, or a dragged window
+  gets deformed twice.
 
 ## License
 
