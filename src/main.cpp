@@ -76,7 +76,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (SERVER != CLIENT) {
         HyprlandAPI::addNotification(PHANDLE, "[omarchy-fx] Version mismatch, refusing to load. Rebuild the plugin against this Hyprland.",
                                      CHyprColor{1.0, 0.2, 0.2, 1.0}, 6000);
-        Log::logger->log(Log::ERR, "[omarchy-fx] version mismatch: server '{}' vs plugin '{}'", SERVER, CLIENT);
+        FX_LOG(Log::ERR, "[omarchy-fx] version mismatch: server '{}' vs plugin '{}'", SERVER, CLIENT);
         throw std::runtime_error("[omarchy-fx] version mismatch");
     }
 
@@ -108,7 +108,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         }
     });
 
-    Log::logger->log(Log::INFO, "[omarchy-fx] loaded, window effects armed");
+    FX_LOG(Log::INFO, "[omarchy-fx] loaded, window effects armed");
 
     return {"omarchy-fx", "Window effects for Omarchy: wobbly dragging, elastic tiling moves, a focus pulse, and shake-to-find for the cursor", "omarchy-fx", "0.4.0"};
 }
