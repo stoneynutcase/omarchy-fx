@@ -1,0 +1,27 @@
+name: Build against Omarchy
+
+# Builds the compositor plugin against the Hyprland each Omarchy channel ships
+# right now. The daily run is the point: edge moves Hyprland ahead of stable,
+# and a break should show up here before it shows up as an issue.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [stable, rc, edge]
+    steps:
+      - uses: actions/checkout@v4
+      - run: ci/build-channel.sh ${{ matrix.channel }}
